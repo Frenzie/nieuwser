@@ -208,6 +208,7 @@ export component MainWindow inherits Window {
     callback next-article();
     callback prev-article();
     callback select-feed(int);
+    callback save-pane-widths(length, length);
     callback select-article(int, bool, bool);
     callback context-article(int);
     callback set-selection-read(bool);
@@ -421,6 +422,9 @@ export component MainWindow inherits Window {
                         root.feed-width = root.max-feed-width;
                     }
                 }
+                finish => {
+                    root.save-pane-widths(root.feed-width, root.list-width);
+                }
             }
 
             Rectangle {
@@ -564,6 +568,9 @@ export component MainWindow inherits Window {
                     if (root.list-width > root.max-list-width) {
                         root.list-width = root.max-list-width;
                     }
+                }
+                finish => {
+                    root.save-pane-widths(root.feed-width, root.list-width);
                 }
             }
 

@@ -45,6 +45,8 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
     let ui = MainWindow::new()?;
+    ui.set_feed_width(saved_length(&store, "feed_width", 260.0).max(160.0));
+    ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
         streams: Vec::new(),
         items: Vec::new(),
@@ -107,6 +109,7 @@ fn main() -> Result<()> {
     );
 
     ui.run()?;
+    save_pane_widths(&store, ui.get_feed_width(), ui.get_list_width());
     drop(timer);
     Ok(())
 }
@@ -117,6 +120,13 @@ fn bind_callbacks(
     state: &Arc<Mutex<UiState>>,
     runtime: &tokio::runtime::Runtime,
 ) {
+    {
+        let store = store.clone();
+        ui.on_save_pane_widths(move |feed_width, list_width| {
+            save_pane_widths(&store, feed_width, list_width);
+        });
+    }
+
     {
         let ui_weak = ui.as_weak();
         let store = store.clone();
@@ -519,6 +529,21 @@ fn spawn_sync(
             }
         });
     });
+}
+
+fn saved_length(store: &Store, key: &str, default: f32) -> f32 {
+    store
+        .state(key)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+        .filter(|value: &f32| value.is_finite())
+        .unwrap_or(default)
+}
+
+fn save_pane_widths(store: &Store, feed_width: f32, list_width: f32) {
+    let _ = store.set_state("feed_width", &format!("{feed_width:.0}"));
+    let _ = store.set_state("list_width", &format!("{list_width:.0}"));
 }
 
 fn last_synced_text(store: &Store) -> String {
