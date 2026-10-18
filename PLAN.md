@@ -74,6 +74,7 @@ pulled from the server updates `items` without enqueueing.
 ## UI
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
+The article list loads 300 items at a time with a "Load more" button.
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links.
 Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
 inline images are promoted out of paragraphs. Keyboard-first: `j`/`↓` next
@@ -102,9 +103,9 @@ Working today:
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
-  navigation, local search, feed selection, article list, rich block-based reader with clickable
-  links, cached feed icons and article images, persisted light/dark theme, read/star/mark-all
-  actions, manual refresh that preserves the open article.
+  navigation, local search, feed selection, paginated article list, rich block-based reader with
+  clickable links, cached feed icons and article images, persisted light/dark theme,
+  read/star/mark-all actions, manual refresh that preserves the open article.
 - Tests: 18 core tests covering API parsing/auth, reader blocks, storage/migration,
   reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
@@ -115,8 +116,8 @@ Working today:
 
 Next up:
 
-1. Pagination or a larger item limit for big accounts.
-2. Layout polish for narrow windows and resizable panes.
+1. Layout polish for narrow windows and resizable panes.
+2. Packaging and cross-platform checks.
 
 
 ## How to run

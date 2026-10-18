@@ -73,6 +73,7 @@ export component MainWindow inherits Window {
 
     in property <[FeedRow]> feeds;
     in property <[ArticleRow]> articles;
+    in-out property <bool> has-more-articles: false;
     in-out property <bool> dark-mode: false;
 
     init => {
@@ -111,6 +112,7 @@ export component MainWindow inherits Window {
     callback prev-article();
     callback select-feed(int);
     callback select-article(int);
+    callback load-more();
     callback search(string);
     callback open-link(string);
     callback toggle-read();
@@ -320,8 +322,7 @@ export component MainWindow inherits Window {
 
                     ListView {
                         content-y <=> root.article-content-y;
-                        for article[i] in root.articles : Rectangle {
-                            height: 64px;
+                        for article[i] in root.articles : Rectangle {                            height: 64px;
                             border-radius: 6px;
                             background: i == root.article-index ? Theme.article-selected : transparent;
 
@@ -375,6 +376,13 @@ export component MainWindow inherits Window {
                                     root.select-article(i);
                                 }
                             }
+                        }
+                    }
+
+                    if root.has-more-articles : Button {
+                        text: "Load more";
+                        clicked => {
+                            root.load-more();
                         }
                     }
                 }

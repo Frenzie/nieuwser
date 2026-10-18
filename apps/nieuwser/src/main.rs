@@ -21,6 +21,8 @@ struct UiState {
     pending_media: HashSet<String>,
 }
 
+const ARTICLE_PAGE: i64 = 300;
+
 fn main() -> Result<()> {
     let db_path = db_path();
     if let Some(parent) = db_path.parent() {
@@ -292,6 +294,19 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
+        ui.on_load_more(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Err(error) = load_more(&ui, &store, &state) {
+                    ui.set_status(format!("Could not load more articles: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
         ui.on_toggle_read(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let index = ui.get_article_index();
@@ -549,8 +564,22 @@ fn load_stream(
     };
 
     let query = ui.get_search_query();
-    let items = store.items(&stream, 300, 0, false, Some(query.as_str()))?;
-    let rows: Vec<ArticleRow> = items
+    let items = store.items(&stream, ARTICLE_PAGE, 0, false, Some(query.as_str()))?;
+    let rows = article_rows(&items);
+    let has_more = items.len() as i64 == ARTICLE_PAGE;
+
+    state.lock().unwrap().items = items;
+    ui.set_articles(ModelRc::new(VecModel::from(rows)));
+    ui.set_has_more_articles(has_more);
+    ui.set_article_index(-1);
+    ui.set_reader_title("".into());
+    ui.set_reader_meta("".into());
+    ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+    Ok(())
+}
+
+fn article_rows(items: &[ItemRow]) -> Vec<ArticleRow> {
+    items
         .iter()
         .map(|item| ArticleRow {
             id: item.id.clone().into(),
@@ -560,14 +589,38 @@ fn load_stream(
             read: item.read,
             starred: item.starred,
         })
-        .collect();
+        .collect()
+}
 
-    state.lock().unwrap().items = items;
+fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Result<()> {
+    let (stream, offset) = {
+        let state = state.lock().unwrap();
+        let index = ui.get_feed_index().max(0) as usize;
+        (state.streams.get(index).cloned(), state.items.len())
+    };
+    let Some(stream) = stream else {
+        return Ok(());
+    };
+    let query = ui.get_search_query();
+    let items = store.items(
+        &stream,
+        ARTICLE_PAGE,
+        offset as i64,
+        false,
+        Some(query.as_str()),
+    )?;
+    if items.is_empty() {
+        ui.set_has_more_articles(false);
+        return Ok(());
+    }
+    let mut rows = {
+        let state = state.lock().unwrap();
+        article_rows(&state.items)
+    };
+    rows.extend(article_rows(&items));
     ui.set_articles(ModelRc::new(VecModel::from(rows)));
-    ui.set_article_index(-1);
-    ui.set_reader_title("".into());
-    ui.set_reader_meta("".into());
-    ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+    ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
+    state.lock().unwrap().items.extend(items);
     Ok(())
 }
 
