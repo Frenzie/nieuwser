@@ -1,6 +1,6 @@
 slint::include_modules!();
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -293,7 +293,7 @@ fn bind_callbacks(
                     return;
                 }
                 ui.set_article_index(index);
-                push_articles(&ui, &state);
+                sync_article_rows(&ui, &state);
                 let mark_read = !ctrl && !shift;
                 let _ = select_article(&ui, &store, &state, index, mark_read, mark_read);
             }
@@ -310,7 +310,7 @@ fn bind_callbacks(
                     return;
                 }
                 ui.set_article_index(index);
-                push_articles(&ui, &state);
+                sync_article_rows(&ui, &state);
                 let _ = select_article(&ui, &store, &state, index, false, false);
             }
         });
@@ -616,18 +616,22 @@ fn load_stream(
     Ok(())
 }
 
+fn article_row(item: &ItemSummary, selected: bool) -> ArticleRow {
+    ArticleRow {
+        id: item.id.clone().into(),
+        title: display_title(&item.title).into(),
+        feed: item.feed_title.clone().into(),
+        time: relative_time(item.published).into(),
+        read: item.read,
+        starred: item.starred,
+        selected,
+    }
+}
+
 fn article_rows(items: &[ItemSummary], selected: &HashSet<String>) -> Vec<ArticleRow> {
     items
         .iter()
-        .map(|item| ArticleRow {
-            id: item.id.clone().into(),
-            title: display_title(&item.title).into(),
-            feed: item.feed_title.clone().into(),
-            time: relative_time(item.published).into(),
-            read: item.read,
-            starred: item.starred,
-            selected: selected.contains(&item.id),
-        })
+        .map(|item| article_row(item, selected.contains(&item.id)))
         .collect()
 }
 
@@ -637,6 +641,35 @@ fn push_articles(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
         article_rows(&state.items, &state.selected)
     };
     ui.set_articles(ModelRc::new(VecModel::from(rows)));
+}
+
+// Update only rows whose flags changed instead of replacing the model.
+fn sync_article_rows(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
+    let state = state.lock().unwrap();
+    let model = ui.get_articles();
+    for (index, item) in state.items.iter().enumerate() {
+        let selected = state.selected.contains(&item.id);
+        let Some(old) = model.row_data(index) else {
+            break;
+        };
+        if old.read != item.read || old.starred != item.starred || old.selected != selected {
+            model.set_row_data(index, article_row(item, selected));
+        }
+    }
+}
+
+// Keep feed and "All items" unread badges in sync without re-reading feeds.
+fn adjust_unread(ui: &MainWindow, feed_id: &str, delta: i32) {
+    let model = ui.get_feeds();
+    for index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(index) else {
+            continue;
+        };
+        if row.id.as_str() == "all" || row.id.as_str() == feed_id {
+            row.unread = (row.unread + delta).max(0);
+            model.set_row_data(index, row);
+        }
+    }
 }
 
 fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Result<()> {
@@ -661,8 +694,13 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
         return Ok(());
     }
     ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
-    state.lock().unwrap().items.extend(items);
-    push_articles(ui, state);
+    let mut state = state.lock().unwrap();
+    let start = state.items.len();
+    state.items.extend(items);
+    let model = ui.get_articles();
+    for item in &state.items[start..] {
+        let _ = model.push_row(article_row(item, state.selected.contains(&item.id)));
+    }
     Ok(())
 }
 
@@ -691,7 +729,7 @@ fn reload_preserving_selection(
             .collect();
         state.anchor = anchor.filter(|id| state.selected.contains(id));
     }
-    push_articles(ui, state);
+    sync_article_rows(ui, state);
     if let Some(id) = lead {
         let found = state
             .lock()
@@ -775,8 +813,8 @@ fn select_article(
                 item.read = true;
             }
         }
-        push_articles(ui, state);
-        refresh_feeds(ui, store, state)?;
+        sync_article_rows(ui, state);
+        adjust_unread(ui, &item.feed_id, -1);
     }
 
     if allow_fetch && needs_fetch {
@@ -958,7 +996,7 @@ fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>
     ui.set_article_index(next);
     ui.set_article_content_y(next as f32 * 64.0);
     apply_selection(state, next, false, false);
-    push_articles(ui, state);
+    sync_article_rows(ui, state);
     let _ = select_article(ui, store, state, next, true, true);
 }
 
@@ -1022,6 +1060,15 @@ fn mark_selected_read(
     if ids.is_empty() {
         return;
     }
+    let mut deltas: HashMap<String, i32> = HashMap::new();
+    {
+        let state = state.lock().unwrap();
+        for item in &state.items {
+            if state.selected.contains(&item.id) && item.read != read {
+                *deltas.entry(item.feed_id.clone()).or_default() += if read { -1 } else { 1 };
+            }
+        }
+    }
     if let Err(error) = store.set_read(&ids, read) {
         ui.set_status(format!("Update failed: {error}").into());
         return;
@@ -1034,8 +1081,10 @@ fn mark_selected_read(
             }
         }
     }
-    push_articles(ui, state);
-    let _ = refresh_feeds(ui, store, state);
+    sync_article_rows(ui, state);
+    for (feed_id, delta) in deltas {
+        adjust_unread(ui, &feed_id, delta);
+    }
     ui.set_status(
         format!(
             "Marked {} article(s) {} (queued)",
@@ -1068,7 +1117,7 @@ fn mark_selected_starred(
             }
         }
     }
-    push_articles(ui, state);
+    sync_article_rows(ui, state);
     ui.set_status(
         format!(
             "{} {} article(s) (queued)",
