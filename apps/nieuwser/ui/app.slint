@@ -22,6 +22,7 @@ export struct ReaderBlock {
     kind: string,
     label: string,
     text: styled-text,
+    chunks: [styled-text],
     indent: int,
     source: string,
     image: image,
@@ -191,9 +192,6 @@ export component MainWindow inherits Window {
     in-out property <length> article-content-y: 0px;
     in-out property <string> search-query;
 
-    in-out property <length> reader-scroll-y: 0px;
-    out property <length> reader-viewport-height: reader-scroll.visible-height;
-    out property <length> reader-content-height: reader-scroll.content-height;
     in-out property <bool> settings-open;
     in-out property <string> settings-url;
     in-out property <string> settings-email;
@@ -229,9 +227,13 @@ export component MainWindow inherits Window {
     forward-focus: main-focus;
 
     scroll-reader(delta) => {
-        root.reader-scroll-y = Math.min(0px, Math.max(
-            root.reader-scroll-y + delta,
-            root.reader-viewport-height - root.reader-content-height));
+        reader-scroll.content-y = Math.min(0px, Math.max(
+            reader-scroll.content-y + delta,
+            reader-scroll.visible-height - reader-scroll.content-height));
+    }
+
+    public function scroll-reader-to-top() {
+        reader-scroll.content-y = 0px;
     }
 
     main-focus := FocusScope {
@@ -244,16 +246,16 @@ export component MainWindow inherits Window {
                     reject
                 }
             } else if (event.text == Key.PageDown || (event.text == " " && !event.modifiers.shift)) {
-                root.scroll-reader(0px - root.reader-viewport-height * 0.9);
+                root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == Key.PageUp || (event.text == " " && event.modifiers.shift)) {
-                root.scroll-reader(root.reader-viewport-height * 0.9);
+                root.scroll-reader(reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == Key.Home) {
-                root.reader-scroll-y = 0px;
+                reader-scroll.content-y = 0px;
                 accept
             } else if (event.text == Key.End) {
-                root.scroll-reader(0px - root.reader-content-height);
+                root.scroll-reader(0px - reader-scroll.content-height);
                 accept
             } else if (event.text == Key.DownArrow
                        || (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
@@ -639,7 +641,6 @@ export component MainWindow inherits Window {
                     }
 
                     reader-scroll := ScrollView {
-                        content-y <=> root.reader-scroll-y;
                         VerticalLayout {
                             spacing: 12px;
 
@@ -697,6 +698,7 @@ export component MainWindow inherits Window {
                                         if !block.has-image : ReaderText {
                                             text: block.text;
                                             kind: block.kind;
+                                            width: reader-scroll.visible-width - 40px;
                                             link-clicked(link) => {
                                                 root.open-link(link);
                                             }
@@ -716,9 +718,14 @@ export component MainWindow inherits Window {
                                             font-weight: 600;
                                             color: Theme.text-muted;
                                         }
-                                        ReaderText {
-                                            text: block.text;
-                                            kind: block.kind;
+                                        VerticalLayout {
+                                            spacing: 0;
+                                            horizontal-stretch: 1;
+                                            for chunk in block.chunks : ReaderText {
+                                                text: chunk;
+                                                kind: block.kind;
+                                                width: reader-scroll.visible-width - 40px;
+                                            }
                                         }
                                     }
                                 }
@@ -740,11 +747,19 @@ export component MainWindow inherits Window {
                                         vertical-alignment: top;
                                     }
 
-                                    ReaderText {
-                                        text: block.text;
-                                        kind: block.kind;
-                                        link-clicked(link) => {
-                                            root.open-link(link);
+                                    VerticalLayout {
+                                        spacing: 0;
+                                        horizontal-stretch: 1;
+                                        for chunk in block.chunks : ReaderText {
+                                            text: chunk;
+                                            kind: block.kind;
+                                            // Slint 1.18 measures wrapped text at its unconstrained width.
+                                            width: reader-scroll.visible-width - 20px - block.indent * 18px
+                                                - (block.kind == "quote" ? 11px : 0px)
+                                                - (block.label != "" ? 38px : 0px);
+                                            link-clicked(link) => {
+                                                root.open-link(link);
+                                            }
                                         }
                                     }
                                 }

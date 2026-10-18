@@ -866,7 +866,7 @@ fn select_article(
         return Ok(());
     };
     let id = summary.id.clone();
-    ui.set_reader_scroll_y(0.0);
+    ui.invoke_scroll_reader_to_top();
     let Some(item) = store.item(&id)? else {
         return Ok(());
     };
@@ -979,6 +979,44 @@ fn select_article(
     Ok(())
 }
 
+// Keep each text item small: Slint starves input on very large blocks.
+fn text_chunks(text: &str) -> Vec<String> {
+    const MAX_CHARS: usize = 4000;
+    const MAX_LINES: usize = 200;
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut lines = 0;
+    for line in text.lines() {
+        let mut rest = line;
+        loop {
+            let cut = rest
+                .char_indices()
+                .nth(MAX_CHARS)
+                .map_or(rest.len(), |(i, _)| {
+                    rest[..i]
+                        .rfind(char::is_whitespace)
+                        .filter(|&i| i > 0)
+                        .unwrap_or(i)
+                });
+            current.push_str(&rest[..cut]);
+            current.push('\n');
+            lines += 1;
+            if lines >= MAX_LINES || current.len() >= MAX_CHARS {
+                chunks.push(std::mem::take(&mut current));
+                lines = 0;
+            }
+            rest = rest[cut..].trim_start_matches(char::is_whitespace);
+            if rest.is_empty() {
+                break;
+            }
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
 fn to_reader_block(block: Block, image: Option<slint::Image>) -> ReaderBlock {
     let kind = match block.kind {
         BlockKind::Heading(level) => format!("h{level}"),
@@ -996,12 +1034,28 @@ fn to_reader_block(block: Block, image: Option<slint::Image>) -> ReaderBlock {
         StyledText::from_markdown(&block.text)
             .unwrap_or_else(|_| StyledText::from_plain_text(&block.text))
     };
+    let chunks = if matches!(block.kind, BlockKind::Rule | BlockKind::Image) {
+        Vec::new()
+    } else {
+        text_chunks(&block.text)
+            .into_iter()
+            .map(|chunk| {
+                if block.kind == BlockKind::Code {
+                    StyledText::from_plain_text(&chunk)
+                } else {
+                    StyledText::from_markdown(&chunk)
+                        .unwrap_or_else(|_| StyledText::from_plain_text(&chunk))
+                }
+            })
+            .collect()
+    };
     let source = block.url.unwrap_or_default();
     let has_image = image.is_some();
     ReaderBlock {
         kind: kind.into(),
         label: block.label.into(),
         text,
+        chunks: ModelRc::new(VecModel::from(chunks)),
         indent: match block.kind {
             BlockKind::ListItem { depth } => depth as i32,
             _ => 0,
@@ -1060,6 +1114,7 @@ fn set_reader_message(ui: &MainWindow, message: &str) {
         kind: "p".into(),
         label: "".into(),
         text: StyledText::from_plain_text(message),
+        chunks: ModelRc::new(VecModel::from(Vec::<StyledText>::new())),
         indent: 0,
         source: "".into(),
         image: slint::Image::default(),
