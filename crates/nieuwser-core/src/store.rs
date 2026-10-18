@@ -13,6 +13,8 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
+pub const DEFAULT_CACHE_BYTES: u64 = 500 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct FeedRow {
     pub id: String,
@@ -524,6 +526,67 @@ impl Store {
             .optional()?)
     }
 
+    pub fn cache_bytes(&self) -> Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(
+                 LENGTH(CAST(COALESCE(content_html, '') AS BLOB)) +
+                 LENGTH(CAST(COALESCE(summary_html, '') AS BLOB))
+             ), 0) FROM items",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(bytes.max(0) as u64)
+    }
+
+    /// Clears bodies of the oldest read, unstarred items until the cache fits.
+    pub fn enforce_cache_budget(&self, max_bytes: u64) -> Result<usize> {
+        let mut bytes: u64 = self.cache_bytes()?;
+        if bytes <= max_bytes {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut evicted = 0;
+        loop {
+            let candidates: Vec<(String, i64)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id,
+                            LENGTH(CAST(COALESCE(content_html, '') AS BLOB)) +
+                            LENGTH(CAST(COALESCE(summary_html, '') AS BLOB)) AS size
+                     FROM items
+                     WHERE read = 1 AND starred = 0
+                       AND (LENGTH(CAST(COALESCE(content_html, '') AS BLOB)) +
+                            LENGTH(CAST(COALESCE(summary_html, '') AS BLOB))) > 0
+                     ORDER BY timestamp_usec ASC, id ASC
+                     LIMIT 100",
+                )?;
+                let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<std::result::Result<_, _>>()?
+            };
+            if candidates.is_empty() {
+                break;
+            }
+            for (id, size) in candidates {
+                tx.execute(
+                    "UPDATE items SET content_html = '', summary_html = '' WHERE id = ?1",
+                    params![id],
+                )?;
+                bytes = bytes.saturating_sub(size.max(0) as u64);
+                evicted += 1;
+                if bytes <= max_bytes {
+                    break;
+                }
+            }
+            if bytes <= max_bytes {
+                break;
+            }
+        }
+        tx.commit()?;
+        Ok(evicted)
+    }
+
     pub fn set_read(&self, ids: &[String], read: bool) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
@@ -945,5 +1008,46 @@ mod tests {
             .unwrap();
         store.set_auth_token(Some("token")).unwrap();
         assert_eq!(store.auth_token().unwrap().as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn cache_budget_evicts_only_old_read_bodies() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+
+        let mut old_read = item("1", "feed/1", 1_000_000, true);
+        old_read.content = Some(Content {
+            content: "a".repeat(1000),
+        });
+        let mut new_read = item("2", "feed/1", 2_000_000, true);
+        new_read.content = Some(Content {
+            content: "b".repeat(1000),
+        });
+        let mut unread = item("3", "feed/1", 500_000, false);
+        unread.content = Some(Content {
+            content: "c".repeat(1000),
+        });
+        let mut starred = item("4", "feed/1", 600_000, true);
+        starred.content = Some(Content {
+            content: "d".repeat(1000),
+        });
+        starred
+            .categories
+            .push("user/-/state/com.google/starred".into());
+
+        store
+            .upsert_items(&[old_read, new_read, unread, starred])
+            .unwrap();
+        assert_eq!(store.cache_bytes().unwrap(), 4000);
+
+        assert_eq!(store.enforce_cache_budget(2500).unwrap(), 2);
+        assert!(store.item("1").unwrap().unwrap().content_html.is_empty());
+        assert!(store.item("2").unwrap().unwrap().content_html.is_empty());
+        assert!(!store.item("3").unwrap().unwrap().content_html.is_empty());
+        assert!(!store.item("4").unwrap().unwrap().content_html.is_empty());
+        assert!(store.cache_bytes().unwrap() <= 2500);
+        assert_eq!(store.enforce_cache_budget(2500).unwrap(), 0);
     }
 }

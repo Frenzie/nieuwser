@@ -8,13 +8,13 @@ use anyhow::Result;
 use nieuwser_core::models::Stream;
 use nieuwser_core::reader::html_to_text;
 use nieuwser_core::store::ItemRow;
-use nieuwser_core::{Store, SyncEngine};
+use nieuwser_core::{Client, Store, SyncEngine};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-#[derive(Default)]
 struct UiState {
     streams: Vec<Stream>,
     items: Vec<ItemRow>,
+    handle: tokio::runtime::Handle,
 }
 
 fn main() -> Result<()> {
@@ -27,7 +27,11 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
     let ui = MainWindow::new()?;
-    let state = Arc::new(Mutex::new(UiState::default()));
+    let state = Arc::new(Mutex::new(UiState {
+        streams: Vec::new(),
+        items: Vec::new(),
+        handle: runtime.handle().clone(),
+    }));
 
     refresh_feeds(&ui, &store, &state)?;
     load_stream(&ui, &store, &state, 0)?;
@@ -231,7 +235,7 @@ fn bind_callbacks(
         let state = state.clone();
         ui.on_select_article(move |index| {
             if let Some(ui) = ui_weak.upgrade() {
-                let _ = select_article(&ui, &store, &state, index, true);
+                let _ = select_article(&ui, &store, &state, index, true, true);
             }
         });
     }
@@ -262,7 +266,7 @@ fn bind_callbacks(
             let feed_index = ui.get_feed_index();
             let _ = load_stream(&ui, &store, &state, feed_index);
             ui.set_article_index(index);
-            let _ = select_article(&ui, &store, &state, index, false);
+            let _ = select_article(&ui, &store, &state, index, false, false);
         });
     }
 
@@ -292,7 +296,7 @@ fn bind_callbacks(
             let feed_index = ui.get_feed_index();
             let _ = load_stream(&ui, &store, &state, feed_index);
             ui.set_article_index(index);
-            let _ = select_article(&ui, &store, &state, index, false);
+            let _ = select_article(&ui, &store, &state, index, false, false);
         });
     }
 
@@ -486,7 +490,7 @@ fn load_stream(
 
 fn reload_preserving_selection(
     ui: &MainWindow,
-    store: &Store,
+    store: &Arc<Store>,
     state: &Arc<Mutex<UiState>>,
     stream_index: i32,
 ) -> Result<()> {
@@ -501,7 +505,7 @@ fn reload_preserving_selection(
             .position(|item| item.id == id);
         if let Some(found) = found {
             ui.set_article_index(found as i32);
-            select_article(ui, store, state, found as i32, false)?;
+            select_article(ui, store, state, found as i32, false, false)?;
         }
     }
     Ok(())
@@ -509,21 +513,24 @@ fn reload_preserving_selection(
 
 fn select_article(
     ui: &MainWindow,
-    store: &Store,
+    store: &Arc<Store>,
     state: &Arc<Mutex<UiState>>,
     index: i32,
     mark_read: bool,
+    allow_fetch: bool,
 ) -> Result<()> {
     let Some(item) = selected_item(state, index) else {
         return Ok(());
     };
+    let id = item.id.clone();
     let html = if !item.content_html.trim().is_empty() {
         &item.content_html
     } else {
         &item.summary_html
     };
-    let body = if html.trim().is_empty() {
-        "No cached content. Press Refresh to fetch this article.".to_string()
+    let needs_fetch = html.trim().is_empty();
+    let body = if needs_fetch {
+        "No cached content. Loading…".to_string()
     } else {
         html_to_text(html)
     };
@@ -538,14 +545,61 @@ fn select_article(
     ui.set_reader_body(body.into());
 
     if mark_read && ui.get_mark_read_on_open() && !item.read {
-        store.set_read(&[item.id.clone()], true)?;
+        store.set_read(&[id.clone()], true)?;
         refresh_feeds(ui, store, state)?;
         reload_preserving_selection(ui, store, state, ui.get_feed_index())?;
+    }
+
+    if allow_fetch && needs_fetch {
+        let account = store.account().ok().flatten();
+        let token = store.auth_token().ok().flatten();
+        if let (Some((base, _)), Some(token)) = (account, token) {
+            let ui_weak = ui.as_weak();
+            let store = store.clone();
+            let state = state.clone();
+            let handle = state.lock().unwrap().handle.clone();
+            handle.spawn(async move {
+                let result = match Client::with_auth(&base, token) {
+                    Ok(client) => client.item_contents(&[id.clone()]).await,
+                    Err(error) => Err(error),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui_weak.upgrade() else { return };
+                    let still_selected = selected_item(&state, ui.get_article_index())
+                        .is_some_and(|item| item.id == id);
+                    if !still_selected {
+                        return;
+                    }
+                    match result {
+                        Ok(items) if !items.is_empty() => {
+                            let _ = store.upsert_items(&items);
+                            let loaded = store.item(&id).ok().flatten().is_some_and(|item| {
+                                !item.content_html.trim().is_empty()
+                                    || !item.summary_html.trim().is_empty()
+                            });
+                            if loaded {
+                                let _ = select_article(&ui, &store, &state, index, false, false);
+                            } else {
+                                ui.set_reader_body("No content available from the server.".into());
+                            }
+                        }
+                        Ok(_) => ui.set_reader_body("No content available from the server.".into()),
+                        Err(error) => {
+                            ui.set_reader_body(format!("Could not load article: {error}").into())
+                        }
+                    }
+                });
+            });
+        } else {
+            ui.set_reader_body(
+                "No cached content. Connect an account to fetch this article.".into(),
+            );
+        }
     }
     Ok(())
 }
 
-fn move_article(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>, delta: i32) {
+fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>, delta: i32) {
     let len = state.lock().unwrap().items.len() as i32;
     if len == 0 {
         return;
@@ -558,7 +612,7 @@ fn move_article(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>, del
     };
     ui.set_article_index(next);
     ui.set_article_content_y(next as f32 * 64.0);
-    let _ = select_article(ui, store, state, next, true);
+    let _ = select_article(ui, store, state, next, true, true);
 }
 
 fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemRow> {

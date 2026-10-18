@@ -11,7 +11,8 @@ Status: M0/M1/M2 complete; M3 in progress (2026-10-18).
 - **Article view:** sanitized native rich-text reader view, no embedded webview in v1.
 - **Sync:** FreshRSS Google Reader API (`/api/greader.php`), not Fever.
 - **Storage:** SQLite via `rusqlite`; metadata kept indefinitely, ~500 MB default budget for
-  article bodies and media. Never evict unread/starred bodies.
+  article bodies and media. Never evict unread/starred bodies. Oldest read/unstarred bodies are
+  cleared after sync; a cleared body is fetched again when the article is opened.
 - **Offline:** yes. Local changes are written to an outbox and replayed on the next sync.
 - **Auth:** the settings dialog exchanges the password for a FreshRSS auth token via ClientLogin.
   Only the token is stored locally; the password is never persisted.
@@ -97,16 +98,16 @@ Working today:
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, feed selection, article list, plain-text reader view, read/star/mark-all actions,
   manual refresh that preserves the open article.
-- Tests: 10 core tests covering API parsing/auth, storage/migration, reconciliation, and a
-  mocked end-to-end sync.
+- Tests: 11 core tests covering API parsing/auth, storage/migration, reconciliation, cache
+  eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
-  read-on-open, and keyboard navigation all work.
+  read-on-open, keyboard navigation, and on-demand article restore after cache eviction.
 
 Next up:
 
-1. Cache budget/eviction and image/feed-icon caching.
+1. Image/feed-icon caching (on-disk HTTP cache).
 2. Structured reader document IR (headings, links, lists, images) instead of plain text.
 3. Search in the desktop UI (the store/CLI already support it).
 4. Themes and layout polish.

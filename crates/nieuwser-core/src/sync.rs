@@ -6,7 +6,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::Result;
 use crate::api::Client;
 use crate::models::{Stream, UnreadCounts};
-use crate::store::{OutboxOp, Store};
+use crate::store::{DEFAULT_CACHE_BYTES, OutboxOp, Store};
 
 pub struct SyncEngine {
     client: Client,
@@ -18,6 +18,7 @@ pub struct SyncReport {
     pub pushed_ops: usize,
     pub new_items: usize,
     pub starred_items: usize,
+    pub evicted: usize,
     pub feeds: usize,
     pub unread: i64,
     pub duration_ms: u128,
@@ -27,14 +28,13 @@ impl fmt::Display for SyncReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "pushed {} ops, {} new items, {} starred, {} feeds, {} unread, {} ms",
-            self.pushed_ops,
-            self.new_items,
-            self.starred_items,
-            self.feeds,
-            self.unread,
-            self.duration_ms
-        )
+            "pushed {} ops, {} new items, {} starred, {} feeds, {} unread",
+            self.pushed_ops, self.new_items, self.starred_items, self.feeds, self.unread
+        )?;
+        if self.evicted > 0 {
+            write!(f, ", {} bodies evicted", self.evicted)?;
+        }
+        write!(f, ", {} ms", self.duration_ms)
     }
 }
 
@@ -75,6 +75,7 @@ impl SyncEngine {
         let starred_items = self.pull_stream(Stream::Starred, None, 500).await?;
         self.reconcile_read(&counts).await?;
         self.reconcile_starred().await?;
+        let evicted = self.store.enforce_cache_budget(DEFAULT_CACHE_BYTES)?;
 
         let unread = self.store.total_unread()?;
         self.store.set_state("last_sync_at", &now().to_string())?;
@@ -87,6 +88,7 @@ impl SyncEngine {
             pushed_ops,
             new_items,
             starred_items,
+            evicted,
             feeds: subscriptions.len(),
             unread,
             duration_ms: started.elapsed().as_millis(),
