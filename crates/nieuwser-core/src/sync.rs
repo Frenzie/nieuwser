@@ -61,8 +61,9 @@ impl SyncEngine {
         self.store.set_unread_counts(&counts.unreadcounts)?;
 
         let newest = self.store.newest_item_usec()?;
-        let nt = (newest > 0).then_some(newest / 1_000_000);
-        let new_items = self.pull_stream(Stream::All, nt, 500).await?;
+        let ot = (newest > 0).then_some(newest / 1_000_000);
+        let max_items = if ot.is_some() { usize::MAX } else { 500 };
+        let new_items = self.pull_stream(Stream::All, ot, max_items).await?;
         let starred_items = self.pull_stream(Stream::Starred, None, 500).await?;
         self.reconcile_read(&counts).await?;
         self.reconcile_starred().await?;
@@ -87,19 +88,20 @@ impl SyncEngine {
     async fn pull_stream(
         &self,
         stream: Stream,
-        nt: Option<i64>,
+        ot: Option<i64>,
         max_items: usize,
     ) -> Result<usize> {
         let mut continuation: Option<String> = None;
-        let mut total = 0;
-        while total < max_items {
+        let mut fetched = 0;
+        let mut new_items = 0;
+        while fetched < max_items {
             let page = self
                 .client
                 .stream_contents(
                     &stream.api_id(),
                     100,
-                    nt,
                     None,
+                    ot,
                     continuation.as_deref(),
                     None,
                 )
@@ -107,8 +109,8 @@ impl SyncEngine {
             if page.items.is_empty() {
                 break;
             }
-            total += page.items.len();
-            self.store.upsert_items(&page.items)?;
+            fetched += page.items.len();
+            new_items += self.store.upsert_items(&page.items)?;
             match page.continuation {
                 Some(next) if Some(&next) != continuation.as_ref() => {
                     continuation = Some(next);
@@ -116,7 +118,7 @@ impl SyncEngine {
                 _ => break,
             }
         }
-        Ok(total)
+        Ok(new_items)
     }
 
     /// Fetch the complete unread set when possible; otherwise leave local state alone.
@@ -379,6 +381,24 @@ mod tests {
         assert_eq!(
             store.feeds().unwrap()[0].folder_name.as_deref(),
             Some("News")
+        );
+
+        let second = engine.sync().await.unwrap();
+        assert_eq!(second.new_items, 0);
+        let requests = server.received_requests().await.unwrap();
+        let last = requests
+            .iter()
+            .rev()
+            .find(|r| {
+                r.url
+                    .path()
+                    .ends_with("/stream/contents/user/-/state/com.google/reading-list")
+            })
+            .unwrap();
+        assert!(
+            last.url
+                .query_pairs()
+                .any(|(k, v)| k == "ot" && v == "1700000000")
         );
     }
 }

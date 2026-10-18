@@ -46,10 +46,13 @@ Base URL is the server's API address, e.g. `https://freshrss.example.net/api/gre
 
 Gotchas:
 
-- `ot`/`nt` are seconds; `timestampUsec` is microseconds; `mark-all-as-read` `ts` is nanoseconds.
+- `ot`/`nt` are seconds and bound the crawl time: use `ot` for items newer than the last sync,
+  `nt` only for upper-bound pagination. `timestampUsec` is microseconds; `mark-all-as-read` `ts`
+  is nanoseconds.
 - Feeds belong to exactly one folder in FreshRSS.
-- FreshRSS item IDs are numeric but may arrive as `tag:google.com,2005:reader/item/<id>`;
-  use the last path segment for `edit-tag`.
+- IDs come in two forms: `stream/contents` returns
+  `tag:google.com,2005:reader/item/<16-hex>`, while `stream/items/ids` returns the same ID as a
+  decimal. Use the hex suffix for local IDs and `edit-tag`; match decimal IDs for reconciliation.
 - Always send `Content-Type: application/x-www-form-urlencoded` on writes.
 
 ## Data model
@@ -90,15 +93,16 @@ Working today:
 - Slint app: three-pane shell, feed selection, article list, plain-text reader view,
   read/star/mark-all actions, manual refresh with env credentials.
 - Tests: API parsing/auth, store round-trips, mocked end-to-end sync.
+- Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
+  reports 0 new items; mark read/unread and star/unstar round-trip; UI refresh works.
 
 Next up:
 
-1. Validate against a real FreshRSS instance (the API details are from docs and mocks).
-2. Onboarding/settings screen so credentials do not come from env vars.
-3. Background sync on an interval and a visible "last synced" state.
-4. Mark-read-on-open policy and keyboard navigation.
-5. Cache budget/eviction and image/feed-icon caching.
-6. Structured reader document IR (headings, links, lists, images) instead of plain text.
+1. Onboarding/settings screen so credentials do not come from env vars.
+2. Background sync on an interval and a visible "last synced" state.
+3. Mark-read-on-open policy and keyboard navigation.
+4. Cache budget/eviction and image/feed-icon caching.
+5. Structured reader document IR (headings, links, lists, images) instead of plain text.
 
 
 ## How to run
@@ -116,8 +120,9 @@ FRESHRSS_PASSWORD=... cargo run -p nieuwser-cli -- \
 cargo run -p nieuwser-cli -- --db ./nieuwser.db feeds
 cargo run -p nieuwser-cli -- --db ./nieuwser.db items --stream all --limit 20
 
-# UI (uses $NIEUWSER_DB or the XDG data dir)
-cargo run -p nieuwser
+# UI (uses $NIEUWSER_DB, $NIEUWSER_API_URL, $NIEUWSER_EMAIL, $FRESHRSS_PASSWORD)
+NIEUWSER_API_URL=http://localhost:8080/api/ NIEUWSER_EMAIL=Frenzie \
+  FRESHRSS_PASSWORD=... cargo run -p nieuwser
 ```
 
 ## Conventions

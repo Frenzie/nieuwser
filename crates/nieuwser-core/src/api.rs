@@ -14,7 +14,9 @@ pub fn normalize_api_url(input: &str) -> Result<String> {
     if base.is_empty() {
         return Err(Error::Other("API URL is empty".into()));
     }
-    if !base.ends_with("/api/greader.php") {
+    if base.ends_with("/api") {
+        base.push_str("/greader.php");
+    } else if !base.ends_with("/api/greader.php") {
         base.push_str("/api/greader.php");
     }
     Url::parse(&base)?;
@@ -318,6 +320,10 @@ mod tests {
         );
         assert_eq!(
             normalize_api_url("https://example.com/api/greader.php/").unwrap(),
+            "https://example.com/api/greader.php"
+        );
+        assert_eq!(
+            normalize_api_url("https://example.com/api/").unwrap(),
             "https://example.com/api/greader.php"
         );
     }

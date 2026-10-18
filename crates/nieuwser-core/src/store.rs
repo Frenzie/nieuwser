@@ -280,16 +280,23 @@ impl Store {
         Ok(())
     }
 
-    pub fn upsert_items(&self, items: &[Item]) -> Result<()> {
+    pub fn upsert_items(&self, items: &[Item]) -> Result<usize> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let now = now();
         let mut affected_feeds = HashSet::new();
+        let mut new_items = 0;
 
         for item in items {
             let Some(feed_id) = item.feed_id() else {
                 continue;
             };
+            let id = item.short_id();
+            let is_new: i64 = tx.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM items WHERE id = ?1)",
+                params![id],
+                |row| row.get(0),
+            )?;
             let feed_id = feed_id.to_string();
             let feed_title = item.feed_title().unwrap_or(&feed_id).to_string();
             affected_feeds.insert(feed_id.clone());
@@ -339,7 +346,7 @@ impl Store {
                     fetched_at = excluded.fetched_at
                 "#,
                 params![
-                    item.short_id(),
+                    id,
                     feed_id,
                     item.title,
                     item.author,
@@ -355,6 +362,9 @@ impl Store {
                     now
                 ],
             )?;
+            if is_new != 0 {
+                new_items += 1;
+            }
         }
 
         for feed_id in affected_feeds {
@@ -366,7 +376,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        Ok(())
+        Ok(new_items)
     }
 
     pub fn feeds(&self) -> Result<Vec<FeedRow>> {
@@ -629,12 +639,14 @@ impl Store {
         }
         tx.execute(
             "UPDATE items SET read = 1 WHERE read = 0
-             AND id NOT IN (SELECT id FROM remote_ids)",
+             AND id NOT IN (SELECT id FROM remote_ids)
+             AND CAST(timestamp_usec AS TEXT) NOT IN (SELECT id FROM remote_ids)",
             [],
         )?;
         tx.execute(
             "UPDATE items SET read = 0 WHERE read = 1
-             AND id IN (SELECT id FROM remote_ids)",
+             AND (id IN (SELECT id FROM remote_ids)
+                  OR CAST(timestamp_usec AS TEXT) IN (SELECT id FROM remote_ids))",
             [],
         )?;
         tx.commit()?;
@@ -657,11 +669,14 @@ impl Store {
         }
         tx.execute(
             "UPDATE items SET starred = 0 WHERE starred = 1
-             AND id NOT IN (SELECT id FROM remote_ids)",
+             AND id NOT IN (SELECT id FROM remote_ids)
+             AND CAST(timestamp_usec AS TEXT) NOT IN (SELECT id FROM remote_ids)",
             [],
         )?;
         tx.execute(
-            "UPDATE items SET starred = 1 WHERE id IN (SELECT id FROM remote_ids)",
+            "UPDATE items SET starred = 1
+             WHERE id IN (SELECT id FROM remote_ids)
+                OR CAST(timestamp_usec AS TEXT) IN (SELECT id FROM remote_ids)",
             [],
         )?;
         tx.commit()?;
@@ -852,5 +867,18 @@ mod tests {
         let items = store.items(&Stream::All, 10, 0, false, None).unwrap();
         assert!(!items.iter().find(|i| i.id == "1").unwrap().read);
         assert!(items.iter().find(|i| i.id == "2").unwrap().read);
+
+        // FreshRSS reports decimal entry IDs in stream/items/ids.
+        store
+            .reconcile_read_state(&HashSet::from(["2000000".to_string()]))
+            .unwrap();
+        store
+            .reconcile_starred_state(&HashSet::from(["2000000".to_string()]))
+            .unwrap();
+        let items = store.items(&Stream::All, 10, 0, false, None).unwrap();
+        assert!(items.iter().find(|i| i.id == "1").unwrap().read);
+        assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
+        assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
+        assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
     }
 }
