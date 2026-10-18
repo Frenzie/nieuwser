@@ -33,14 +33,16 @@ fn main() -> Result<()> {
     load_stream(&ui, &store, &state, 0)?;
     bind_callbacks(&ui, &store, &state, &runtime);
 
-    if store.account()?.is_none() {
-        ui.set_status(
-            format!(
-                "No account yet. Set NIEUWSER_API_URL, NIEUWSER_EMAIL and FRESHRSS_PASSWORD, then press Refresh. DB: {}",
-                db_path.display()
-            )
-            .into(),
-        );
+    if let Some((base, email)) = store.account()? {
+        ui.set_settings_url(base.into());
+        ui.set_settings_email(email.into());
+        ui.set_settings_has_account(true);
+    }
+    if store.auth_token()?.is_none() {
+        ui.set_settings_open(true);
+        ui.set_status("Connect your FreshRSS account to sync.".into());
+    } else {
+        ui.set_status(format!("Ready. DB: {}", db_path.display()).into());
     }
 
     ui.run()?;
@@ -53,6 +55,92 @@ fn bind_callbacks(
     state: &Arc<Mutex<UiState>>,
     runtime: &tokio::runtime::Runtime,
 ) {
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.on_open_settings(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                match store.account() {
+                    Ok(Some((base, email))) => {
+                        ui.set_settings_url(base.into());
+                        ui.set_settings_email(email.into());
+                        ui.set_settings_has_account(true);
+                    }
+                    _ => ui.set_settings_has_account(false),
+                }
+                ui.set_settings_status("".into());
+                ui.set_settings_open(true);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_close_settings(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                if ui.get_settings_has_account() {
+                    ui.set_settings_open(false);
+                    ui.set_settings_password("".into());
+                    ui.set_settings_status("".into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        let handle = runtime.handle().clone();
+        ui.on_save_settings(move |url, email, password| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let url = url.trim().to_string();
+            let email = email.trim().to_string();
+            let password = password.to_string();
+            if url.is_empty() || email.is_empty() || password.is_empty() {
+                ui.set_settings_status("Fill in the server URL, username, and password.".into());
+                return;
+            }
+            ui.set_settings_busy(true);
+            ui.set_settings_status("Connecting…".into());
+
+            let ui_weak = ui.as_weak();
+            let store = store.clone();
+            let state = state.clone();
+            handle.spawn(async move {
+                let result = match SyncEngine::new(store.clone(), &url, &email, &password).await {
+                    Ok(mut engine) => engine.sync().await,
+                    Err(error) => Err(error),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_settings_busy(false);
+                        match result {
+                            Ok(report) => {
+                                ui.set_settings_open(false);
+                                ui.set_settings_password("".into());
+                                ui.set_settings_status("".into());
+                                ui.set_settings_has_account(true);
+                                ui.set_status(format!("{report}").into());
+                                let index = ui.get_feed_index();
+                                let _ = refresh_feeds(&ui, &store, &state);
+                                let _ = load_stream(&ui, &store, &state, index);
+                            }
+                            Err(error) => {
+                                if store.account().ok().flatten().is_some() {
+                                    ui.set_settings_has_account(true);
+                                }
+                                ui.set_settings_status(
+                                    format!("Connection failed: {error}").into(),
+                                );
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     {
         let ui_weak = ui.as_weak();
         let store = store.clone();
@@ -165,14 +253,11 @@ fn bind_callbacks(
         let handle = runtime.handle().clone();
         ui.on_refresh(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let (Ok(base), Ok(email), Ok(password)) = (
-                std::env::var("NIEUWSER_API_URL"),
-                std::env::var("NIEUWSER_EMAIL"),
-                std::env::var("FRESHRSS_PASSWORD"),
-            ) else {
-                ui.set_status(
-                    "Set NIEUWSER_API_URL, NIEUWSER_EMAIL and FRESHRSS_PASSWORD to sync.".into(),
-                );
+            let account = store.account().ok().flatten();
+            let token = store.auth_token().ok().flatten();
+            let (Some((base, _email)), Some(token)) = (account, token) else {
+                ui.invoke_open_settings();
+                ui.set_settings_status("Enter your FreshRSS details to sync.".into());
                 return;
             };
             ui.set_syncing(true);
@@ -182,7 +267,7 @@ fn bind_callbacks(
             let store = store.clone();
             let state = state.clone();
             handle.spawn(async move {
-                let result = match SyncEngine::new(store.clone(), &base, &email, &password).await {
+                let result = match SyncEngine::with_auth(store.clone(), &base, &token) {
                     Ok(mut engine) => engine.sync().await,
                     Err(error) => Err(error),
                 };
@@ -197,6 +282,13 @@ fn bind_callbacks(
                                 let _ = load_stream(&ui, &store, &state, index);
                             }
                             Err(error) => {
+                                if error.is_auth_error() {
+                                    let _ = store.set_auth_token(None);
+                                    ui.invoke_open_settings();
+                                    ui.set_settings_status(
+                                        "Session expired. Enter your password again.".into(),
+                                    );
+                                }
                                 ui.set_status(format!("Sync failed: {error}").into());
                             }
                         }

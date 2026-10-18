@@ -78,6 +78,7 @@ impl Store {
                 id          INTEGER PRIMARY KEY CHECK (id = 1),
                 base_url    TEXT NOT NULL,
                 email       TEXT NOT NULL,
+                auth_token  TEXT,
                 created_at  INTEGER NOT NULL
             );
 
@@ -135,6 +136,14 @@ impl Store {
             );
             "#,
         )?;
+        let has_auth_token: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('account') WHERE name = 'auth_token'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_auth_token == 0 {
+            conn.execute("ALTER TABLE account ADD COLUMN auth_token TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -155,6 +164,26 @@ impl Store {
                 "SELECT base_url, email FROM account WHERE id = 1",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn set_auth_token(&self, token: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE account SET auth_token = ?1 WHERE id = 1",
+            params![token],
+        )?;
+        Ok(())
+    }
+
+    pub fn auth_token(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT auth_token FROM account WHERE id = 1 AND auth_token IS NOT NULL",
+                [],
+                |row| row.get(0),
             )
             .optional()?)
     }
@@ -880,5 +909,41 @@ mod tests {
         assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
         assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
         assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
+    }
+
+    #[test]
+    fn stores_account_token() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.account().unwrap().is_none());
+        assert!(store.auth_token().unwrap().is_none());
+
+        store
+            .set_account("https://example.com/api/greader.php", "me")
+            .unwrap();
+        assert!(store.auth_token().unwrap().is_none());
+        store.set_auth_token(Some("token")).unwrap();
+        assert_eq!(store.auth_token().unwrap().as_deref(), Some("token"));
+        store.set_auth_token(None).unwrap();
+        assert!(store.auth_token().unwrap().is_none());
+    }
+
+    #[test]
+    fn migrates_account_token_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE account (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                email TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+        let store = Store::from_connection(conn).unwrap();
+        store
+            .set_account("https://example.com/api/greader.php", "me")
+            .unwrap();
+        store.set_auth_token(Some("token")).unwrap();
+        assert_eq!(store.auth_token().unwrap().as_deref(), Some("token"));
     }
 }

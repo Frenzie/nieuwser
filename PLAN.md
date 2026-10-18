@@ -3,7 +3,7 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
-Status: M0 complete, M1 shell working (2026-10-18).
+Status: M0/M1 complete; M2 in progress (2026-10-18).
 
 ## Decisions
 
@@ -13,6 +13,8 @@ Status: M0 complete, M1 shell working (2026-10-18).
 - **Storage:** SQLite via `rusqlite`; metadata kept indefinitely, ~500 MB default budget for
   article bodies and media. Never evict unread/starred bodies.
 - **Offline:** yes. Local changes are written to an outbox and replayed on the next sync.
+- **Auth:** the settings dialog exchanges the password for a FreshRSS auth token via ClientLogin.
+  Only the token is stored locally; the password is never persisted.
 - **Scope:** single account, no feed management in the initial PoC.
 - **Figma:** Slint's one-way "Figma to Slint" importer; imported screens go in `ui/imported/`
   and are not hand-edited.
@@ -75,8 +77,8 @@ Keyboard-first. Mark-read policy and themes come after the shell works.
 ## Milestones
 
 - **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
-- **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(shell done; onboarding and background sync pending)*
-- **M2 — offline writes:** read/star/mark-all, outbox replay, background sync.
+- **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(done)*
+- **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(writes done; background sync pending)*
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget.
 - **M4 — content:** reader document IR, image cache, feed icons.
 - **M5 — hardening:** large accounts, retries, packaging.
@@ -90,19 +92,20 @@ Working today:
   unread/starred reconciliation.
 - SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
-- Slint app: three-pane shell, feed selection, article list, plain-text reader view,
-  read/star/mark-all actions, manual refresh with env credentials.
-- Tests: API parsing/auth, store round-trips, mocked end-to-end sync.
+- Slint app: three-pane shell, settings/onboarding dialog, stored auth token, feed selection,
+  article list, plain-text reader view, read/star/mark-all actions, manual refresh.
+- Tests: 10 core tests covering API parsing/auth, storage/migration, reconciliation, and a
+  mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
-  reports 0 new items; mark read/unread and star/unstar round-trip; UI refresh works.
+  reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
+  restart, expired-token re-prompt, and UI refresh all work.
 
 Next up:
 
-1. Onboarding/settings screen so credentials do not come from env vars.
-2. Background sync on an interval and a visible "last synced" state.
-3. Mark-read-on-open policy and keyboard navigation.
-4. Cache budget/eviction and image/feed-icon caching.
-5. Structured reader document IR (headings, links, lists, images) instead of plain text.
+1. Background sync on an interval and a visible "last synced" state.
+2. Mark-read-on-open policy and keyboard navigation.
+3. Cache budget/eviction and image/feed-icon caching.
+4. Structured reader document IR (headings, links, lists, images) instead of plain text.
 
 
 ## How to run
@@ -120,9 +123,8 @@ FRESHRSS_PASSWORD=... cargo run -p nieuwser-cli -- \
 cargo run -p nieuwser-cli -- --db ./nieuwser.db feeds
 cargo run -p nieuwser-cli -- --db ./nieuwser.db items --stream all --limit 20
 
-# UI (uses $NIEUWSER_DB, $NIEUWSER_API_URL, $NIEUWSER_EMAIL, $FRESHRSS_PASSWORD)
-NIEUWSER_API_URL=http://localhost:8080/api/ NIEUWSER_EMAIL=Frenzie \
-  FRESHRSS_PASSWORD=... cargo run -p nieuwser
+# UI; first run opens the account dialog. Set NIEUWSER_DB to override the data directory.
+cargo run -p nieuwser
 ```
 
 ## Conventions

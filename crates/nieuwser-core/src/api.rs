@@ -78,6 +78,10 @@ impl Client {
         &self.base
     }
 
+    pub fn auth_token(&self) -> &str {
+        &self.auth
+    }
+
     fn auth_header(&self) -> String {
         format!("GoogleLogin auth={}", self.auth)
     }

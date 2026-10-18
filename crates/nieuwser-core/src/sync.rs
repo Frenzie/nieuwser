@@ -47,7 +47,15 @@ impl SyncEngine {
     ) -> Result<Self> {
         let client = Client::login(base_url, email, password).await?;
         store.set_account(client.base_url(), email)?;
+        store.set_auth_token(Some(client.auth_token()))?;
         Ok(Self { client, store })
+    }
+
+    pub fn with_auth(store: Arc<Store>, base_url: &str, auth_token: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::with_auth(base_url, auth_token.to_string())?,
+            store,
+        })
     }
 
     pub async fn sync(&mut self) -> Result<SyncReport> {

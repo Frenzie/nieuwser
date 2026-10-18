@@ -31,3 +31,14 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl Error {
+    pub fn is_auth_error(&self) -> bool {
+        matches!(
+            self,
+            Error::Http { status, .. }
+                if *status == reqwest::StatusCode::UNAUTHORIZED
+                    || *status == reqwest::StatusCode::FORBIDDEN
+        )
+    }
+}
