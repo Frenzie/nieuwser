@@ -68,6 +68,9 @@ fn main() -> Result<()> {
     }
     ui.set_last_synced(last_synced_text(&store).into());
     ui.set_mark_read_on_open(store.state("mark_read_on_open")?.as_deref() != Some("0"));
+    ui.set_mark_read_on_open_browser(
+        store.state("mark_read_on_open_browser")?.as_deref() != Some("0"),
+    );
     let dark_mode = store.state("dark_mode")?.as_deref() == Some("1");
     ui.set_dark_mode(dark_mode);
     ui.global::<Theme>().set_dark(dark_mode);
@@ -231,6 +234,20 @@ fn bind_callbacks(
     {
         let ui_weak = ui.as_weak();
         let store = store.clone();
+        ui.on_set_mark_read_on_open_browser(move |value| {
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Err(error) =
+                    store.set_state("mark_read_on_open_browser", if value { "1" } else { "0" })
+                {
+                    ui.set_status(format!("Settings failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
         ui.on_set_dark_mode(move |value| {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_dark_mode(value);
@@ -371,10 +388,11 @@ fn bind_callbacks(
 
     {
         let ui_weak = ui.as_weak();
+        let store = store.clone();
         let state = state.clone();
         ui.on_open_selection(move || {
             if let Some(ui) = ui_weak.upgrade() {
-                open_selected(&ui, &state);
+                open_selected(&ui, &store, &state, ui.get_mark_read_on_open_browser());
             }
         });
     }
@@ -1229,30 +1247,9 @@ fn mark_selected_read(
     if ids.is_empty() {
         return;
     }
-    let mut deltas: HashMap<String, i32> = HashMap::new();
-    {
-        let state = state.lock().unwrap();
-        for item in &state.items {
-            if state.selected.contains(&item.id) && item.read != read {
-                *deltas.entry(item.feed_id.clone()).or_default() += if read { -1 } else { 1 };
-            }
-        }
-    }
-    if let Err(error) = store.set_read(&ids, read) {
+    if let Err(error) = set_items_read(ui, store, state, &ids, read) {
         ui.set_status(format!("Update failed: {error}").into());
         return;
-    }
-    {
-        let mut state = state.lock().unwrap();
-        for item in &mut state.items {
-            if ids.contains(&item.id) {
-                item.read = read;
-            }
-        }
-    }
-    sync_article_rows(ui, state);
-    for (feed_id, delta) in deltas {
-        adjust_unread(ui, &feed_id, delta);
     }
     ui.set_status(
         format!(
@@ -1262,6 +1259,44 @@ fn mark_selected_read(
         )
         .into(),
     );
+}
+
+fn set_items_read(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    ids: &[String],
+    read: bool,
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let id_set: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut deltas: HashMap<String, i32> = HashMap::new();
+    {
+        let state = state.lock().unwrap();
+        for item in &state.items {
+            if id_set.contains(item.id.as_str()) && item.read != read {
+                *deltas.entry(item.feed_id.clone()).or_default() += if read { -1 } else { 1 };
+            }
+        }
+    }
+    store
+        .set_read(ids, read)
+        .map_err(|error| error.to_string())?;
+    {
+        let mut state = state.lock().unwrap();
+        for item in &mut state.items {
+            if id_set.contains(item.id.as_str()) {
+                item.read = read;
+            }
+        }
+    }
+    sync_article_rows(ui, state);
+    for (feed_id, delta) in deltas {
+        adjust_unread(ui, &feed_id, delta);
+    }
+    Ok(())
 }
 
 fn mark_selected_starred(
@@ -1315,16 +1350,46 @@ fn selected_links(state: &Arc<Mutex<UiState>>) -> Vec<String> {
         .collect()
 }
 
-fn open_selected(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
+fn open_selected(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    mark_read: bool,
+) {
     let links = selected_links(state);
     if links.is_empty() {
         ui.set_status("No link for the selected article(s).".into());
         return;
     }
-    let opened = links
-        .iter()
-        .filter(|link| open_external(link).is_ok())
-        .count();
+    let mut opened_links = HashSet::new();
+    for link in &links {
+        if open_external(link).is_ok() {
+            opened_links.insert(link.as_str());
+        }
+    }
+    let opened = opened_links.len();
+    if mark_read && opened > 0 {
+        let ids: Vec<String> = {
+            let state = state.lock().unwrap();
+            state
+                .items
+                .iter()
+                .filter(|item| state.selected.contains(&item.id))
+                .filter(|item| {
+                    item.href
+                        .as_deref()
+                        .is_some_and(|href| opened_links.contains(href))
+                })
+                .map(|item| item.id.clone())
+                .collect()
+        };
+        if let Err(error) = set_items_read(ui, store, state, &ids, true) {
+            ui.set_status(
+                format!("Opened {opened} link(s), but marking read failed: {error}").into(),
+            );
+            return;
+        }
+    }
     ui.set_status(format!("Opened {opened} link(s).").into());
 }
 

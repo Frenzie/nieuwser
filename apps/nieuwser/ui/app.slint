@@ -190,6 +190,7 @@ export component MainWindow inherits Window {
     in property <string> last-synced;
     in property <bool> syncing: false;
     in-out property <bool> mark-read-on-open: true;
+    in-out property <bool> mark-read-on-open-browser: true;
     in-out property <length> article-content-y: 0px;
     in-out property <string> search-query;
 
@@ -206,6 +207,7 @@ export component MainWindow inherits Window {
     callback close-settings();
     callback save-settings(string, string, string);
     callback set-mark-read-on-open(bool);
+    callback set-mark-read-on-open-browser(bool);
     callback set-dark-mode(bool);
     callback next-article();
     callback prev-article();
@@ -950,6 +952,14 @@ export component MainWindow inherits Window {
                     checked <=> root.mark-read-on-open;
                     toggled => {
                         root.set-mark-read-on-open(self.checked);
+                    }
+                }
+
+                CheckBox {
+                    text: "Mark articles read when opening in browser";
+                    checked <=> root.mark-read-on-open-browser;
+                    toggled => {
+                        root.set-mark-read-on-open-browser(self.checked);
                     }
                 }
 

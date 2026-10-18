@@ -80,7 +80,8 @@ Reader blocks use native `StyledText` with inline emphasis, code, and clickable 
 Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
 inline images are promoted out of paragraphs. Keyboard-first: `j` next
 article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read, `s` toggle star, `Esc` close settings.
-Mark-read-on-open is optional in Settings (default on). Light/dark theme is stored locally and
+Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
+Light/dark theme is stored locally and
 also switches the standard Slint widget palette.
 
 ## Milestones
