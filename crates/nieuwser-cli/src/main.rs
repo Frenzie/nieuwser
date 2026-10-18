@@ -84,7 +84,11 @@ async fn main() -> Result<()> {
             for item in store.items(&stream, limit, 0, unread, search.as_deref())? {
                 let flag = if item.read { " " } else { "*" };
                 let star = if item.starred { "+" } else { " " };
-                println!("{flag}{star} {:<80} [{}]", truncate(&item.title, 80), item.feed_title);
+                println!(
+                    "{flag}{star} {:<80} [{}]",
+                    truncate(&item.title, 80),
+                    item.feed_title
+                );
             }
         }
         Command::MarkRead { ids, unread } => {

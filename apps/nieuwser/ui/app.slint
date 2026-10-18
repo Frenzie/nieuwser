@@ -1,0 +1,311 @@
+import { Button, ListView, ScrollView } from "std-widgets.slint";
+
+export struct FeedRow {
+    id: string,
+    title: string,
+    folder: string,
+    unread: int,
+}
+
+export struct ArticleRow {
+    id: string,
+    title: string,
+    feed: string,
+    time: string,
+    read: bool,
+    starred: bool,
+}
+
+export component MainWindow inherits Window {
+    title: "Nieuwser";
+    preferred-width: 1280px;
+    preferred-height: 820px;
+    background: #f7f7f5;
+
+    in property <[FeedRow]> feeds;
+    in property <[ArticleRow]> articles;
+    in-out property <int> feed-index: 0;
+    in-out property <int> article-index: -1;
+    in property <string> reader-title;
+    in property <string> reader-meta;
+    in property <string> reader-body;
+    in property <string> status;
+    in property <bool> syncing: false;
+
+    callback refresh();
+    callback select-feed(int);
+    callback select-article(int);
+    callback toggle-read();
+    callback toggle-star();
+    callback mark-all-read();
+
+    VerticalLayout {
+        Rectangle {
+            height: 52px;
+            background: #ffffff;
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 12px;
+
+                Text {
+                    text: "Nieuwser";
+                    font-size: 17px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 1px;
+                    background: #e2e2de;
+                }
+
+                Text {
+                    text: root.status;
+                    color: #6b6b66;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: root.syncing ? "Syncing…" : "";
+                    color: #8a6d3b;
+                    vertical-alignment: center;
+                }
+
+                Button {
+                    text: "Refresh";
+                    enabled: !root.syncing;
+                    clicked => {
+                        root.refresh();
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #e2e2de;
+        }
+
+        HorizontalLayout {
+            Rectangle {
+                width: 260px;
+                background: #fbfbf9;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "Feeds";
+                        font-weight: 600;
+                        color: #55554f;
+                    }
+
+                    ListView {
+                        for feed[i] in root.feeds : Rectangle {
+                            height: 38px;
+                            border-radius: 6px;
+                            background: i == root.feed-index ? #e6edf7 : transparent;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 6px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: feed.title;
+                                        overflow: elide;
+                                        font-size: 13px;
+                                    }
+                                    Text {
+                                        text: feed.folder;
+                                        font-size: 10px;
+                                        color: #8a8a83;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                Text {
+                                    text: feed.unread > 0 ? "(" + feed.unread + ")" : "";
+                                    color: #4a6fa5;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => {
+                                    root.feed-index = i;
+                                    root.select-feed(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: #e2e2de;
+            }
+
+            Rectangle {
+                width: 400px;
+                background: #ffffff;
+
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 6px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "Articles";
+                            font-weight: 600;
+                            color: #55554f;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            text: "Mark all read";
+                            clicked => {
+                                root.mark-all-read();
+                            }
+                        }
+                    }
+
+                    ListView {
+                        for article[i] in root.articles : Rectangle {
+                            height: 64px;
+                            border-radius: 6px;
+                            background: i == root.article-index ? #eef3fa : transparent;
+
+                            HorizontalLayout {
+                                padding: 8px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: article.read ? "" : "●";
+                                    color: #3b6fb6;
+                                    font-size: 8px;
+                                    vertical-alignment: center;
+                                }
+
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: article.title;
+                                        font-size: 13px;
+                                        font-weight: article.read ? 400 : 600;
+                                        overflow: elide;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text {
+                                            text: article.feed;
+                                            color: #77776f;
+                                            font-size: 11px;
+                                            overflow: elide;
+                                            horizontal-stretch: 1;
+                                        }
+                                        Text {
+                                            text: article.time;
+                                            color: #999990;
+                                            font-size: 11px;
+                                        }
+                                        Text {
+                                            text: article.starred ? "★" : "";
+                                            color: #c49a23;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => {
+                                    root.article-index = i;
+                                    root.select-article(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: #e2e2de;
+            }
+
+            Rectangle {
+                background: #ffffff;
+
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "Reader";
+                            font-weight: 600;
+                            color: #55554f;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            text: "Mark read";
+                            clicked => {
+                                root.toggle-read();
+                            }
+                        }
+                        Button {
+                            text: "Star";
+                            clicked => {
+                                root.toggle-star();
+                            }
+                        }
+                    }
+
+                    ScrollView {
+                        VerticalLayout {
+                            spacing: 10px;
+
+                            Text {
+                                text: root.reader-title;
+                                font-size: 24px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.reader-meta;
+                                color: #77776f;
+                                font-size: 12px;
+                            }
+
+                            Rectangle {
+                                height: 1px;
+                                background: #ecece8;
+                            }
+
+                            Text {
+                                text: root.reader-body;
+                                wrap: word-wrap;
+                                font-size: 15px;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

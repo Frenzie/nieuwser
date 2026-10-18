@@ -3,6 +3,8 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
+Status: M0 complete, M1 shell working (2026-10-18).
+
 ## Decisions
 
 - **UI:** Slint. The UI must stay replaceable, so all business logic lives in `nieuwser-core`.
@@ -69,12 +71,35 @@ Keyboard-first. Mark-read policy and themes come after the shell works.
 
 ## Milestones
 
-- **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(in progress)*
-- **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view.
+- **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
+- **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(shell done; onboarding and background sync pending)*
 - **M2 — offline writes:** read/star/mark-all, outbox replay, background sync.
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget.
 - **M4 — content:** reader document IR, image cache, feed icons.
 - **M5 — hardening:** large accounts, retries, packaging.
+
+## Current status
+
+Working today:
+
+- `nieuwser-core`: greader auth, CSRF token, subscriptions/tags/unread counts, stream
+  contents, item IDs/contents, edit-tag, mark-all-as-read, incremental pagination, outbox replay,
+  unread/starred reconciliation.
+- SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries.
+- `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
+- Slint app: three-pane shell, feed selection, article list, plain-text reader view,
+  read/star/mark-all actions, manual refresh with env credentials.
+- Tests: API parsing/auth, store round-trips, mocked end-to-end sync.
+
+Next up:
+
+1. Validate against a real FreshRSS instance (the API details are from docs and mocks).
+2. Onboarding/settings screen so credentials do not come from env vars.
+3. Background sync on an interval and a visible "last synced" state.
+4. Mark-read-on-open policy and keyboard navigation.
+5. Cache budget/eviction and image/feed-icon caching.
+6. Structured reader document IR (headings, links, lists, images) instead of plain text.
+
 
 ## How to run
 
