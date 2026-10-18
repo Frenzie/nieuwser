@@ -65,6 +65,44 @@ component ReaderText inherits StyledText {
     horizontal-stretch: 1;
 }
 
+component Splitter inherits Rectangle {
+    width: 7px;
+    background: transparent;
+    callback start(length);
+    callback drag(length);
+    callback finish();
+    property <bool> dragging: false;
+
+    Rectangle {
+        x: (parent.width - 1px) / 2;
+        width: 1px;
+        height: parent.height;
+        background: Theme.border;
+    }
+
+    TouchArea {
+        mouse-cursor: col-resize;
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left) {
+                if (event.kind == PointerEventKind.down) {
+                    root.dragging = true;
+                    root.start(self.absolute-position.x + self.pressed-x);
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    if (root.dragging) {
+                        root.dragging = false;
+                        root.finish();
+                    }
+                }
+            }
+        }
+        moved => {
+            if (root.dragging) {
+                root.drag(self.absolute-position.x + self.mouse-x);
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "Nieuwser";
     preferred-width: 1280px;
@@ -77,6 +115,12 @@ export component MainWindow inherits Window {
     in property <[ArticleRow]> articles;
     in-out property <bool> has-more-articles: false;
     in-out property <bool> dark-mode: false;
+    in-out property <length> feed-width: 260px;
+    in-out property <length> list-width: 400px;
+    property <length> drag-start-x;
+    property <length> drag-start-width;
+    property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
+    property <length> max-list-width: root.width - root.feed-width - 340px < 240px ? 240px : root.width - root.feed-width - 340px;
 
     init => {
         Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light;
@@ -217,7 +261,7 @@ export component MainWindow inherits Window {
 
         HorizontalLayout {
             Rectangle {
-                width: 260px;
+                width: root.feed-width;
                 background: Theme.surface-alt;
 
                 VerticalLayout {
@@ -285,13 +329,24 @@ export component MainWindow inherits Window {
                 }
             }
 
-            Rectangle {
-                width: 1px;
-                background: Theme.border;
+            Splitter {
+                start(x) => {
+                    root.drag-start-x = x;
+                    root.drag-start-width = root.feed-width;
+                }
+                drag(x) => {
+                    root.feed-width = root.drag-start-width + x - root.drag-start-x;
+                    if (root.feed-width < 160px) {
+                        root.feed-width = 160px;
+                    }
+                    if (root.feed-width > root.max-feed-width) {
+                        root.feed-width = root.max-feed-width;
+                    }
+                }
             }
 
             Rectangle {
-                width: 400px;
+                width: root.list-width;
                 background: Theme.surface;
 
                 VerticalLayout {
@@ -402,9 +457,20 @@ export component MainWindow inherits Window {
                 }
             }
 
-            Rectangle {
-                width: 1px;
-                background: Theme.border;
+            Splitter {
+                start(x) => {
+                    root.drag-start-x = x;
+                    root.drag-start-width = root.list-width;
+                }
+                drag(x) => {
+                    root.list-width = root.drag-start-width + x - root.drag-start-x;
+                    if (root.list-width < 240px) {
+                        root.list-width = 240px;
+                    }
+                    if (root.list-width > root.max-list-width) {
+                        root.list-width = root.max-list-width;
+                    }
+                }
             }
 
             Rectangle {
