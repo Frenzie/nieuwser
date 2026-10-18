@@ -72,7 +72,8 @@ pulled from the server updates `items` without enqueueing.
 ## UI
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
-Keyboard-first. Mark-read policy and themes come after the shell works.
+Keyboard-first: `j`/`↓` next article, `k`/`↑` previous, `m` toggle read, `s` toggle star,
+`Esc` close settings. Mark-read-on-open is optional in Settings (default on).
 
 ## Milestones
 
@@ -93,20 +94,22 @@ Working today:
 - SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
-  (startup plus every 15 minutes), last-sync display, feed selection, article list, plain-text
-  reader view, read/star/mark-all actions, manual refresh that preserves the open article.
+  (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
+  navigation, feed selection, article list, plain-text reader view, read/star/mark-all actions,
+  manual refresh that preserves the open article.
 - Tests: 10 core tests covering API parsing/auth, storage/migration, reconciliation, and a
   mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
-  restart, expired-token re-prompt, startup auto-sync, and selection-preserving refresh work.
+  restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
+  read-on-open, and keyboard navigation all work.
 
 Next up:
 
-1. Mark-read-on-open policy and keyboard navigation.
-2. Cache budget/eviction and image/feed-icon caching.
-3. Structured reader document IR (headings, links, lists, images) instead of plain text.
-4. Search in the desktop UI (the store/CLI already support it).
+1. Cache budget/eviction and image/feed-icon caching.
+2. Structured reader document IR (headings, links, lists, images) instead of plain text.
+3. Search in the desktop UI (the store/CLI already support it).
+4. Themes and layout polish.
 
 
 ## How to run

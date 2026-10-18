@@ -1,4 +1,4 @@
-import { Button, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
 export struct FeedRow {
     id: string,
@@ -32,6 +32,8 @@ export component MainWindow inherits Window {
     in property <string> status;
     in property <string> last-synced;
     in property <bool> syncing: false;
+    in-out property <bool> mark-read-on-open: true;
+    in-out property <length> article-content-y: 0px;
 
     in-out property <bool> settings-open;
     in-out property <string> settings-url;
@@ -45,13 +47,46 @@ export component MainWindow inherits Window {
     callback open-settings();
     callback close-settings();
     callback save-settings(string, string, string);
+    callback set-mark-read-on-open(bool);
+    callback next-article();
+    callback prev-article();
     callback select-feed(int);
     callback select-article(int);
     callback toggle-read();
     callback toggle-star();
     callback mark-all-read();
 
-    VerticalLayout {
+    forward-focus: main-focus;
+
+    main-focus := FocusScope {
+        key-pressed(event) => {
+            if (root.settings-open) {
+                if (event.text == Key.Escape) {
+                    root.close-settings();
+                    accept
+                } else {
+                    reject
+                }
+            } else if (event.text == Key.DownArrow
+                       || (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
+                root.next-article();
+                accept
+            } else if (event.text == Key.UpArrow
+                       || (event.text == "k" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
+                root.prev-article();
+                accept
+            } else if (event.text == "m" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+                root.toggle-read();
+                accept
+            } else if (event.text == "s" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+                root.toggle-star();
+                accept
+            } else {
+                reject
+            }
+        }
+
+        VerticalLayout {
         Rectangle {
             height: 52px;
             background: #ffffff;
@@ -207,6 +242,7 @@ export component MainWindow inherits Window {
                     }
 
                     ListView {
+                        content-y <=> root.article-content-y;
                         for article[i] in root.articles : Rectangle {
                             height: 64px;
                             border-radius: 6px;
@@ -335,6 +371,7 @@ export component MainWindow inherits Window {
             }
         }
     }
+    }
 
     if root.settings-open : Rectangle {
         x: 0;
@@ -350,9 +387,9 @@ export component MainWindow inherits Window {
 
         Rectangle {
             width: 460px;
-            height: 480px;
+            height: 520px;
             x: (parent.width - 460px) / 2;
-            y: (parent.height - 480px) / 2;
+            y: (parent.height - 520px) / 2;
             background: #ffffff;
             border-radius: 10px;
             border-width: 1px;
@@ -373,6 +410,14 @@ export component MainWindow inherits Window {
                     color: #6b6b66;
                     font-size: 12px;
                     wrap: word-wrap;
+                }
+
+                CheckBox {
+                    text: "Mark articles read when opened";
+                    checked <=> root.mark-read-on-open;
+                    toggled => {
+                        root.set-mark-read-on-open(self.checked);
+                    }
                 }
 
                 Text {

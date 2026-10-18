@@ -39,6 +39,7 @@ fn main() -> Result<()> {
         ui.set_settings_has_account(true);
     }
     ui.set_last_synced(last_synced_text(&store).into());
+    ui.set_mark_read_on_open(store.state("mark_read_on_open")?.as_deref() != Some("0"));
     let has_token = store.auth_token()?.is_some();
     if !has_token {
         ui.set_settings_open(true);
@@ -177,9 +178,46 @@ fn bind_callbacks(
     {
         let ui_weak = ui.as_weak();
         let store = store.clone();
+        ui.on_set_mark_read_on_open(move |value| {
+            if let Some(ui) = ui_weak.upgrade() {
+                if let Err(error) =
+                    store.set_state("mark_read_on_open", if value { "1" } else { "0" })
+                {
+                    ui.set_status(format!("Settings failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_next_article(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                move_article(&ui, &store, &state, 1);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_prev_article(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                move_article(&ui, &store, &state, -1);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
         let state = state.clone();
         ui.on_select_feed(move |index| {
             if let Some(ui) = ui_weak.upgrade() {
+                ui.set_article_content_y(0.0);
                 if let Err(error) = load_stream(&ui, &store, &state, index) {
                     ui.set_status(format!("Load failed: {error}").into());
                 }
@@ -189,10 +227,11 @@ fn bind_callbacks(
 
     {
         let ui_weak = ui.as_weak();
+        let store = store.clone();
         let state = state.clone();
         ui.on_select_article(move |index| {
             if let Some(ui) = ui_weak.upgrade() {
-                let _ = select_article(&ui, &state, index);
+                let _ = select_article(&ui, &store, &state, index, true);
             }
         });
     }
@@ -223,7 +262,7 @@ fn bind_callbacks(
             let feed_index = ui.get_feed_index();
             let _ = load_stream(&ui, &store, &state, feed_index);
             ui.set_article_index(index);
-            let _ = select_article(&ui, &state, index);
+            let _ = select_article(&ui, &store, &state, index, false);
         });
     }
 
@@ -253,7 +292,7 @@ fn bind_callbacks(
             let feed_index = ui.get_feed_index();
             let _ = load_stream(&ui, &store, &state, feed_index);
             ui.set_article_index(index);
-            let _ = select_article(&ui, &state, index);
+            let _ = select_article(&ui, &store, &state, index, false);
         });
     }
 
@@ -462,13 +501,19 @@ fn reload_preserving_selection(
             .position(|item| item.id == id);
         if let Some(found) = found {
             ui.set_article_index(found as i32);
-            select_article(ui, state, found as i32)?;
+            select_article(ui, store, state, found as i32, false)?;
         }
     }
     Ok(())
 }
 
-fn select_article(ui: &MainWindow, state: &Arc<Mutex<UiState>>, index: i32) -> Result<()> {
+fn select_article(
+    ui: &MainWindow,
+    store: &Store,
+    state: &Arc<Mutex<UiState>>,
+    index: i32,
+    mark_read: bool,
+) -> Result<()> {
     let Some(item) = selected_item(state, index) else {
         return Ok(());
     };
@@ -491,7 +536,29 @@ fn select_article(ui: &MainWindow, state: &Arc<Mutex<UiState>>, index: i32) -> R
     }
     ui.set_reader_meta(meta.into());
     ui.set_reader_body(body.into());
+
+    if mark_read && ui.get_mark_read_on_open() && !item.read {
+        store.set_read(&[item.id.clone()], true)?;
+        refresh_feeds(ui, store, state)?;
+        reload_preserving_selection(ui, store, state, ui.get_feed_index())?;
+    }
     Ok(())
+}
+
+fn move_article(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>, delta: i32) {
+    let len = state.lock().unwrap().items.len() as i32;
+    if len == 0 {
+        return;
+    }
+    let current = ui.get_article_index();
+    let next = if current < 0 {
+        0
+    } else {
+        (current + delta).clamp(0, len - 1)
+    };
+    ui.set_article_index(next);
+    ui.set_article_content_y(next as f32 * 64.0);
+    let _ = select_article(ui, store, state, next, true);
 }
 
 fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemRow> {
