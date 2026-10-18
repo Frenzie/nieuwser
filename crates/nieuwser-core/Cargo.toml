@@ -1,0 +1,20 @@
+[package]
+name = "nieuwser-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+rusqlite.workspace = true
+html2text = "0.12"
+scraper = "0.23"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+wiremock = "0.6"
