@@ -34,11 +34,13 @@ PLAN.md                 handoff plan, decisions, data model, and status
 ## Build and run
 
 ```sh
-cargo build
+make build   # cargo build --release -p nieuwser
 
 # Desktop app; first run opens the account dialog. Set NIEUWSER_DB to override the database path.
-cargo run -p nieuwser
+make run     # release build; use "make dev" for a debug build
 ```
+
+Release builds are much faster; the debug build is only useful for quick iteration.
 
 The CLI shares the same store and sync engine:
 
