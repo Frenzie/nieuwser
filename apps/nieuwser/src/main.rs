@@ -1,7 +1,7 @@
 slint::include_modules!();
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,6 +14,13 @@ use nieuwser_core::reader::{Block, BlockKind, html_to_blocks};
 use nieuwser_core::store::ItemSummary;
 use nieuwser_core::{Client, Store, SyncEngine};
 use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
+
+#[derive(Clone)]
+struct ReaderView {
+    title: String,
+    meta: String,
+    blocks: ModelRc<ReaderBlock>,
+}
 
 struct UiState {
     streams: Vec<Stream>,
@@ -30,9 +37,11 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
+const READER_CACHE_LIMIT: usize = 24;
 
 thread_local! {
     static IMAGE_CACHE: RefCell<HashMap<(String, u32), slint::Image>> = RefCell::new(HashMap::new());
+    static READER_CACHE: RefCell<VecDeque<(String, ReaderView)>> = RefCell::new(VecDeque::new());
 }
 
 fn main() -> Result<()> {
@@ -846,6 +855,7 @@ fn reload_preserving_selection(
             .map(|item| item.id.clone());
         (state.selected.clone(), state.anchor.clone(), lead)
     };
+    clear_reader_cache();
     load_stream(ui, store, state, stream_index)?;
     {
         let mut state = state.lock().unwrap();
@@ -885,6 +895,26 @@ fn select_article(
     };
     let id = summary.id.clone();
     ui.invoke_scroll_reader_to_top();
+
+    let mut meta = summary.feed_title.clone();
+    if let Some(author) = summary.author.as_ref().filter(|a| !a.trim().is_empty()) {
+        meta.push_str(" · ");
+        meta.push_str(author);
+    }
+    ui.set_reader_title(display_title(&summary.title).into());
+    ui.set_reader_meta(meta.into());
+
+    if let Some(view) = cached_reader(&id) {
+        hydrate_reader_images(ui, store, state, &view.blocks);
+        ui.set_reader_title(view.title.into());
+        ui.set_reader_meta(view.meta.into());
+        ui.set_reader_blocks(view.blocks);
+        if mark_read && ui.get_mark_read_on_open() && !summary.read {
+            mark_item_read(ui, store, state, &id, &summary.feed_id)?;
+        }
+        return Ok(());
+    }
+
     let Some(item) = store.item(&id)? else {
         return Ok(());
     };
@@ -895,13 +925,14 @@ fn select_article(
     };
     let needs_fetch = html.trim().is_empty();
 
-    ui.set_reader_title(display_title(&item.title).into());
-    let mut meta = item.feed_title;
-    if let Some(author) = item.author.filter(|a| !a.trim().is_empty()) {
+    let mut meta = item.feed_title.clone();
+    if let Some(author) = item.author.as_ref().filter(|a| !a.trim().is_empty()) {
         meta.push_str(" · ");
-        meta.push_str(&author);
+        meta.push_str(author);
     }
-    ui.set_reader_meta(meta.into());
+    let title = display_title(&item.title).to_string();
+    ui.set_reader_title(title.clone().into());
+    ui.set_reader_meta(meta.clone().into());
     if needs_fetch {
         set_reader_message(
             ui,
@@ -930,21 +961,22 @@ fn select_article(
         if rows.is_empty() {
             set_reader_message(ui, "No readable content in this article.");
         } else {
-            ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
+            let blocks = ModelRc::new(VecModel::from(rows));
+            ui.set_reader_blocks(blocks.clone());
             spawn_reader_images(ui, store, state, image_urls);
+            remember_reader(
+                id.clone(),
+                ReaderView {
+                    title,
+                    meta,
+                    blocks,
+                },
+            );
         }
     }
 
     if mark_read && ui.get_mark_read_on_open() && !item.read {
-        store.set_read(&[id.clone()], true)?;
-        {
-            let mut state = state.lock().unwrap();
-            if let Some(item) = state.items.iter_mut().find(|item| item.id == id) {
-                item.read = true;
-            }
-        }
-        sync_article_rows(ui, state);
-        adjust_unread(ui, &item.feed_id, -1);
+        mark_item_read(ui, store, state, &id, &item.feed_id)?;
     }
 
     if allow_fetch && needs_fetch {
@@ -1046,11 +1078,11 @@ fn to_reader_block(block: Block, image: Option<slint::Image>) -> ReaderBlock {
         BlockKind::Image => "image".into(),
         BlockKind::Table => "table".into(),
     };
-    let text = if block.kind == BlockKind::Code {
-        StyledText::from_plain_text(&block.text)
-    } else {
+    let text = if block.kind == BlockKind::Image {
         StyledText::from_markdown(&block.text)
             .unwrap_or_else(|_| StyledText::from_plain_text(&block.text))
+    } else {
+        StyledText::default()
     };
     let chunks = if matches!(block.kind, BlockKind::Rule | BlockKind::Image) {
         Vec::new()
@@ -1235,6 +1267,83 @@ fn context_selection(state: &Arc<Mutex<UiState>>, index: i32) -> bool {
         state.anchor = Some(id);
     }
     true
+}
+
+fn cached_reader(id: &str) -> Option<ReaderView> {
+    READER_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let index = cache.iter().position(|(key, _)| key == id)?;
+        let entry = cache.remove(index)?;
+        let view = entry.1.clone();
+        cache.push_back(entry);
+        Some(view)
+    })
+}
+
+fn remember_reader(id: String, view: ReaderView) {
+    READER_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(index) = cache.iter().position(|(key, _)| *key == id) {
+            cache.remove(index);
+        }
+        cache.push_back((id, view));
+        while cache.len() > READER_CACHE_LIMIT {
+            cache.pop_front();
+        }
+    });
+}
+
+fn clear_reader_cache() {
+    READER_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+// Images may have finished loading while another article was open. Apply anything
+// already decoded and retry the rest for the cached model.
+fn hydrate_reader_images(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    blocks: &ModelRc<ReaderBlock>,
+) {
+    let mut missing = Vec::new();
+    for index in 0..blocks.row_count() {
+        let Some(mut row) = blocks.row_data(index) else {
+            continue;
+        };
+        if row.source.is_empty() || row.has_image {
+            continue;
+        }
+        let url = row.source.to_string();
+        if let Some(image) = cached_image(&url, READER_IMAGE_SIZE) {
+            row.image = image;
+            row.has_image = true;
+            blocks.set_row_data(index, row);
+        } else {
+            missing.push(url);
+        }
+    }
+    if !missing.is_empty() {
+        spawn_reader_images(ui, store, state, missing);
+    }
+}
+
+fn mark_item_read(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    id: &str,
+    feed_id: &str,
+) -> Result<()> {
+    store.set_read(&[id.to_string()], true)?;
+    {
+        let mut state = state.lock().unwrap();
+        if let Some(item) = state.items.iter_mut().find(|item| item.id == id) {
+            item.read = true;
+        }
+    }
+    sync_article_rows(ui, state);
+    adjust_unread(ui, feed_id, -1);
+    Ok(())
 }
 
 fn mark_selected_read(
