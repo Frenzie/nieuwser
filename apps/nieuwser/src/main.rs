@@ -2,7 +2,7 @@ slint::include_modules!();
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use nieuwser_core::models::Stream;
@@ -38,14 +38,46 @@ fn main() -> Result<()> {
         ui.set_settings_email(email.into());
         ui.set_settings_has_account(true);
     }
-    if store.auth_token()?.is_none() {
+    ui.set_last_synced(last_synced_text(&store).into());
+    let has_token = store.auth_token()?.is_some();
+    if !has_token {
         ui.set_settings_open(true);
         ui.set_status("Connect your FreshRSS account to sync.".into());
     } else {
         ui.set_status(format!("Ready. DB: {}", db_path.display()).into());
     }
 
+    if has_token {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        let handle = runtime.handle().clone();
+        slint::Timer::single_shot(Duration::from_secs(1), move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                start_sync_if_configured(&ui, &store, &state, &handle);
+            }
+        });
+    }
+
+    let timer_ui = ui.as_weak();
+    let timer_store = store.clone();
+    let timer_state = state.clone();
+    let timer_handle = runtime.handle().clone();
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(15 * 60),
+        move || {
+            if let Some(ui) = timer_ui.upgrade() {
+                if !ui.get_settings_open() {
+                    start_sync_if_configured(&ui, &timer_store, &timer_state, &timer_handle);
+                }
+            }
+        },
+    );
+
     ui.run()?;
+    drop(timer);
     Ok(())
 }
 
@@ -122,9 +154,10 @@ fn bind_callbacks(
                                 ui.set_settings_status("".into());
                                 ui.set_settings_has_account(true);
                                 ui.set_status(format!("{report}").into());
+                                ui.set_last_synced(last_synced_text(&store).into());
                                 let index = ui.get_feed_index();
                                 let _ = refresh_feeds(&ui, &store, &state);
-                                let _ = load_stream(&ui, &store, &state, index);
+                                let _ = reload_preserving_selection(&ui, &store, &state, index);
                             }
                             Err(error) => {
                                 if store.account().ok().flatten().is_some() {
@@ -260,42 +293,82 @@ fn bind_callbacks(
                 ui.set_settings_status("Enter your FreshRSS details to sync.".into());
                 return;
             };
-            ui.set_syncing(true);
-            ui.set_status("Syncing…".into());
-
-            let ui_weak = ui.as_weak();
-            let store = store.clone();
-            let state = state.clone();
-            handle.spawn(async move {
-                let result = match SyncEngine::with_auth(store.clone(), &base, &token) {
-                    Ok(mut engine) => engine.sync().await,
-                    Err(error) => Err(error),
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_syncing(false);
-                        match result {
-                            Ok(report) => {
-                                ui.set_status(format!("{report}").into());
-                                let index = ui.get_feed_index();
-                                let _ = refresh_feeds(&ui, &store, &state);
-                                let _ = load_stream(&ui, &store, &state, index);
-                            }
-                            Err(error) => {
-                                if error.is_auth_error() {
-                                    let _ = store.set_auth_token(None);
-                                    ui.invoke_open_settings();
-                                    ui.set_settings_status(
-                                        "Session expired. Enter your password again.".into(),
-                                    );
-                                }
-                                ui.set_status(format!("Sync failed: {error}").into());
-                            }
-                        }
-                    }
-                });
-            });
+            spawn_sync(&ui, &store, &state, &handle, base, token);
         });
+    }
+}
+
+fn start_sync_if_configured(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    handle: &tokio::runtime::Handle,
+) {
+    let account = store.account().ok().flatten();
+    let token = store.auth_token().ok().flatten();
+    if let (Some((base, _email)), Some(token)) = (account, token) {
+        spawn_sync(ui, store, state, handle, base, token);
+    }
+}
+
+fn spawn_sync(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    handle: &tokio::runtime::Handle,
+    base: String,
+    token: String,
+) {
+    if ui.get_syncing() {
+        return;
+    }
+    ui.set_syncing(true);
+    ui.set_status("Syncing…".into());
+
+    let ui_weak = ui.as_weak();
+    let store = store.clone();
+    let state = state.clone();
+    handle.spawn(async move {
+        let result = match SyncEngine::with_auth(store.clone(), &base, &token) {
+            Ok(mut engine) => engine.sync().await,
+            Err(error) => Err(error),
+        };
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_syncing(false);
+                match result {
+                    Ok(report) => {
+                        ui.set_status(format!("{report}").into());
+                        ui.set_last_synced(last_synced_text(&store).into());
+                        let index = ui.get_feed_index();
+                        let _ = refresh_feeds(&ui, &store, &state);
+                        let _ = reload_preserving_selection(&ui, &store, &state, index);
+                    }
+                    Err(error) => {
+                        if error.is_auth_error() {
+                            let _ = store.set_auth_token(None);
+                            ui.invoke_open_settings();
+                            ui.set_settings_status(
+                                "Session expired. Enter your password again.".into(),
+                            );
+                        }
+                        ui.set_status(format!("Sync failed: {error}").into());
+                    }
+                }
+            }
+        });
+    });
+}
+
+fn last_synced_text(store: &Store) -> String {
+    match store
+        .state("last_sync_at")
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse::<i64>().ok())
+    {
+        Some(ts) => format!("Last sync {}", relative_time(ts)),
+        None => "Never synced".into(),
     }
 }
 
@@ -369,6 +442,29 @@ fn load_stream(
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
     ui.set_reader_body("".into());
+    Ok(())
+}
+
+fn reload_preserving_selection(
+    ui: &MainWindow,
+    store: &Store,
+    state: &Arc<Mutex<UiState>>,
+    stream_index: i32,
+) -> Result<()> {
+    let selected = selected_item(state, ui.get_article_index()).map(|item| item.id);
+    load_stream(ui, store, state, stream_index)?;
+    if let Some(id) = selected {
+        let found = state
+            .lock()
+            .unwrap()
+            .items
+            .iter()
+            .position(|item| item.id == id);
+        if let Some(found) = found {
+            ui.set_article_index(found as i32);
+            select_article(ui, state, found as i32)?;
+        }
+    }
     Ok(())
 }
 

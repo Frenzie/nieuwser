@@ -3,7 +3,7 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
-Status: M0/M1 complete; M2 in progress (2026-10-18).
+Status: M0/M1/M2 complete; M3 in progress (2026-10-18).
 
 ## Decisions
 
@@ -78,8 +78,8 @@ Keyboard-first. Mark-read policy and themes come after the shell works.
 
 - **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
 - **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(done)*
-- **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(writes done; background sync pending)*
-- **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget.
+- **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(done)*
+- **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(in progress)*
 - **M4 — content:** reader document IR, image cache, feed icons.
 - **M5 — hardening:** large accounts, retries, packaging.
 
@@ -92,20 +92,21 @@ Working today:
   unread/starred reconciliation.
 - SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
-- Slint app: three-pane shell, settings/onboarding dialog, stored auth token, feed selection,
-  article list, plain-text reader view, read/star/mark-all actions, manual refresh.
+- Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
+  (startup plus every 15 minutes), last-sync display, feed selection, article list, plain-text
+  reader view, read/star/mark-all actions, manual refresh that preserves the open article.
 - Tests: 10 core tests covering API parsing/auth, storage/migration, reconciliation, and a
   mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
-  restart, expired-token re-prompt, and UI refresh all work.
+  restart, expired-token re-prompt, startup auto-sync, and selection-preserving refresh work.
 
 Next up:
 
-1. Background sync on an interval and a visible "last synced" state.
-2. Mark-read-on-open policy and keyboard navigation.
-3. Cache budget/eviction and image/feed-icon caching.
-4. Structured reader document IR (headings, links, lists, images) instead of plain text.
+1. Mark-read-on-open policy and keyboard navigation.
+2. Cache budget/eviction and image/feed-icon caching.
+3. Structured reader document IR (headings, links, lists, images) instead of plain text.
+4. Search in the desktop UI (the store/CLI already support it).
 
 
 ## How to run

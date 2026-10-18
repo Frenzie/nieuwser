@@ -30,6 +30,7 @@ export component MainWindow inherits Window {
     in property <string> reader-meta;
     in property <string> reader-body;
     in property <string> status;
+    in property <string> last-synced;
     in property <bool> syncing: false;
 
     in-out property <bool> settings-open;
@@ -81,6 +82,13 @@ export component MainWindow inherits Window {
                 Text {
                     text: root.syncing ? "Syncing…" : "";
                     color: #8a6d3b;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.last-synced;
+                    color: #999990;
+                    font-size: 11px;
                     vertical-alignment: center;
                 }
 
