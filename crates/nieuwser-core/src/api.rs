@@ -31,19 +31,17 @@ pub struct Client {
 impl Client {
     pub async fn login(api_url: &str, email: &str, password: &str) -> Result<Self> {
         let base = normalize_api_url(api_url)?;
-        let http = HttpClient::builder()
-            .user_agent("nieuwser/0.1")
-            .build()?;
+        let http = HttpClient::builder().user_agent("nieuwser/0.1").build()?;
+
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("Email", email)
+            .append_pair("Passwd", password)
+            .finish();
 
         let response = http
             .post(format!("{base}/accounts/ClientLogin"))
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(
-                url::form_urlencoded::Serializer::new(String::new())
-                    .append_pair("Email", email)
-                    .append_pair("Passwd", password)
-                    .finish(),
-            )
+            .body(body)
             .send()
             .await?;
         let status = response.status();
@@ -67,9 +65,7 @@ impl Client {
 
     pub fn with_auth(api_url: &str, auth: String) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::builder()
-                .user_agent("nieuwser/0.1")
-                .build()?,
+            http: HttpClient::builder().user_agent("nieuwser/0.1").build()?,
             base: normalize_api_url(api_url)?,
             auth,
             token: None,
@@ -171,10 +167,7 @@ impl Client {
                 }
             }
             if !status.is_success() {
-                return Err(Error::Http {
-                    status,
-                    body: text,
-                });
+                return Err(Error::Http { status, body: text });
             }
             return Ok(text);
         }
@@ -219,11 +212,8 @@ impl Client {
         if let Some(value) = xt {
             params.push(("xt", value.to_string()));
         }
-        self.get_json(
-            &format!("/reader/api/0/stream/contents/{stream}"),
-            &params,
-        )
-        .await
+        self.get_json(&format!("/reader/api/0/stream/contents/{stream}"), &params)
+            .await
     }
 
     pub async fn item_ids(
@@ -299,7 +289,10 @@ impl Client {
     pub async fn mark_all_read(&mut self, stream: &str, ts_ns: i64) -> Result<()> {
         self.write(
             "/reader/api/0/mark-all-as-read",
-            vec![("s".into(), stream.into()), ("ts".into(), ts_ns.to_string())],
+            vec![
+                ("s".into(), stream.into()),
+                ("ts".into(), ts_ns.to_string()),
+            ],
         )
         .await?;
         Ok(())
@@ -351,7 +344,11 @@ mod tests {
 
         let mut client = Client::login(&server.uri(), "me", "pw").await.unwrap();
         client
-            .edit_tag(&["1".into(), "2".into()], &["user/-/state/com.google/read"], &[])
+            .edit_tag(
+                &["1".into(), "2".into()],
+                &["user/-/state/com.google/read"],
+                &[],
+            )
             .await
             .unwrap();
 

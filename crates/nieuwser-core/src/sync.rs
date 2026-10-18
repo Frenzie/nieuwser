@@ -3,10 +3,10 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::Result;
 use crate::api::Client;
 use crate::models::{Stream, UnreadCounts};
 use crate::store::{OutboxOp, Store};
-use crate::Result;
 
 pub struct SyncEngine {
     client: Client,
@@ -69,8 +69,10 @@ impl SyncEngine {
 
         let unread = self.store.total_unread()?;
         self.store.set_state("last_sync_at", &now().to_string())?;
-        self.store
-            .set_state("newest_item_usec", &self.store.newest_item_usec()?.to_string())?;
+        self.store.set_state(
+            "newest_item_usec",
+            &self.store.newest_item_usec()?.to_string(),
+        )?;
 
         Ok(SyncReport {
             pushed_ops,
@@ -93,7 +95,14 @@ impl SyncEngine {
         while total < max_items {
             let page = self
                 .client
-                .stream_contents(&stream.api_id(), 100, nt, None, continuation.as_deref(), None)
+                .stream_contents(
+                    &stream.api_id(),
+                    100,
+                    nt,
+                    None,
+                    continuation.as_deref(),
+                    None,
+                )
                 .await?;
             if page.items.is_empty() {
                 break;
@@ -135,7 +144,11 @@ impl SyncEngine {
                     Some("user/-/state/com.google/read"),
                 )
                 .await?;
-            remote.extend(page.item_refs.into_iter().map(|r| short_id(&r.id).to_string()));
+            remote.extend(
+                page.item_refs
+                    .into_iter()
+                    .map(|r| short_id(&r.id).to_string()),
+            );
             match page.continuation {
                 Some(next) if Some(&next) != continuation.as_ref() => {
                     continuation = Some(next);
@@ -167,7 +180,11 @@ impl SyncEngine {
                     None,
                 )
                 .await?;
-            remote.extend(page.item_refs.into_iter().map(|r| short_id(&r.id).to_string()));
+            remote.extend(
+                page.item_refs
+                    .into_iter()
+                    .map(|r| short_id(&r.id).to_string()),
+            );
             match page.continuation {
                 Some(next) if Some(&next) != continuation.as_ref() => {
                     continuation = Some(next);
@@ -246,4 +263,122 @@ fn now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn item_json(starred: bool) -> serde_json::Value {
+        let mut categories = Vec::new();
+        if starred {
+            categories.push("user/-/state/com.google/starred");
+        }
+        json!({
+            "id": "1",
+            "title": "Hello",
+            "published": 1_700_000_000,
+            "timestampUsec": "1700000000123456",
+            "alternate": [{"href": "https://example.com/1"}],
+            "content": {"content": "<p>Body</p>"},
+            "categories": categories,
+            "origin": {"streamId": "feed/1", "title": "One"}
+        })
+    }
+
+    #[tokio::test]
+    async fn syncs_feeds_items_and_state() {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Auth=secret\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/subscription/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subscriptions": [{
+                    "id": "feed/1",
+                    "title": "One",
+                    "categories": [{"id": "user/-/label/News", "label": "News"}]
+                }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/tag/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "tags": [{"id": "user/-/label/News", "label": "News"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/unread-count"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "unreadcounts": [
+                    {"id": "feed/1", "count": 1},
+                    {"id": "user/-/state/com.google/reading-list", "count": 1}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/api/greader.php/reader/api/0/stream/contents/user/-/state/com.google/reading-list",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [item_json(false)]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/api/greader.php/reader/api/0/stream/contents/user/-/state/com.google/starred",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [item_json(true)]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
+            .and(query_param("s", "user/-/state/com.google/reading-list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemRefs": [{"id": "1"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
+            .and(query_param("s", "user/-/state/com.google/starred"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemRefs": [{"id": "1"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let mut engine = SyncEngine::new(store.clone(), &base, "me", "pw")
+            .await
+            .unwrap();
+        let report = engine.sync().await.unwrap();
+
+        assert_eq!(report.feeds, 1);
+        assert_eq!(report.new_items, 1);
+        assert_eq!(report.unread, 1);
+        let items = store.items(&Stream::All, 10, 0, false, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Hello");
+        assert!(!items[0].read);
+        assert!(items[0].starred);
+        assert_eq!(
+            store.feeds().unwrap()[0].folder_name.as_deref(),
+            Some("News")
+        );
+    }
 }

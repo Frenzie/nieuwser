@@ -4,10 +4,10 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
-use crate::models::{Item, Stream, Subscription, Tag, UnreadCount};
 use crate::Result;
+use crate::models::{Item, Stream, Subscription, Tag, UnreadCount};
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -151,9 +151,11 @@ impl Store {
     pub fn account(&self) -> Result<Option<(String, String)>> {
         let conn = self.conn.lock().unwrap();
         Ok(conn
-            .query_row("SELECT base_url, email FROM account WHERE id = 1", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
+            .query_row(
+                "SELECT base_url, email FROM account WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .optional()?)
     }
 
@@ -179,7 +181,10 @@ impl Store {
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| tag.id.rsplit('/').next().unwrap_or(&tag.id));
-            tx.execute("INSERT OR IGNORE INTO seen_folders(id) VALUES (?1)", params![tag.id])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO seen_folders(id) VALUES (?1)",
+                params![tag.id],
+            )?;
             tx.execute(
                 "INSERT INTO folders(id, name) VALUES (?1, ?2)
                  ON CONFLICT(id) DO UPDATE SET name = excluded.name",
@@ -232,10 +237,16 @@ impl Store {
                     now
                 ],
             )?;
-            tx.execute("INSERT OR IGNORE INTO seen_feeds(id) VALUES (?1)", params![sub.id])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO seen_feeds(id) VALUES (?1)",
+                params![sub.id],
+            )?;
         }
 
-        tx.execute("DELETE FROM feeds WHERE id NOT IN (SELECT id FROM seen_feeds)", [])?;
+        tx.execute(
+            "DELETE FROM feeds WHERE id NOT IN (SELECT id FROM seen_feeds)",
+            [],
+        )?;
         tx.execute(
             "DELETE FROM folders WHERE id NOT IN (SELECT id FROM seen_folders)",
             [],
@@ -276,7 +287,10 @@ impl Store {
         let mut affected_feeds = HashSet::new();
 
         for item in items {
-            let feed_id = item.feed_id().unwrap_or("feed/unknown").to_string();
+            let Some(feed_id) = item.feed_id() else {
+                continue;
+            };
+            let feed_id = feed_id.to_string();
             let feed_title = item.feed_title().unwrap_or(&feed_id).to_string();
             affected_feeds.insert(feed_id.clone());
 
@@ -325,7 +339,7 @@ impl Store {
                     fetched_at = excluded.fetched_at
                 "#,
                 params![
-                    item.id,
+                    item.short_id(),
                     feed_id,
                     item.title,
                     item.author,
@@ -479,7 +493,10 @@ impl Store {
         let tx = conn.transaction()?;
         let op = if read { "read" } else { "unread" };
         for id in ids {
-            tx.execute("UPDATE items SET read = ?1 WHERE id = ?2", params![read as i32, id])?;
+            tx.execute(
+                "UPDATE items SET read = ?1 WHERE id = ?2",
+                params![read as i32, id],
+            )?;
             tx.execute(
                 "DELETE FROM outbox WHERE item_id = ?1 AND op IN ('read', 'unread')",
                 params![id],
@@ -549,9 +566,8 @@ impl Store {
 
     pub fn outbox(&self, limit: i64) -> Result<Vec<OutboxOp>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, item_id, stream_id, op, ts_ns FROM outbox ORDER BY id LIMIT ?1",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT id, item_id, stream_id, op, ts_ns FROM outbox ORDER BY id LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(OutboxOp {
                 id: row.get(0)?,
@@ -606,7 +622,10 @@ impl Store {
              DELETE FROM remote_ids;",
         )?;
         for id in remote_unread {
-            tx.execute("INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)", params![id])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)",
+                params![id],
+            )?;
         }
         tx.execute(
             "UPDATE items SET read = 1 WHERE read = 0
@@ -631,7 +650,10 @@ impl Store {
              DELETE FROM remote_ids;",
         )?;
         for id in remote_starred {
-            tx.execute("INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)", params![id])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)",
+                params![id],
+            )?;
         }
         tx.execute(
             "UPDATE items SET starred = 0 WHERE starred = 1
@@ -657,9 +679,11 @@ impl Store {
 
     pub fn total_unread(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        Ok(conn.query_row("SELECT COUNT(*) FROM items WHERE read = 0", [], |row| {
-            row.get(0)
-        })?)
+        Ok(
+            conn.query_row("SELECT COUNT(*) FROM items WHERE read = 0", [], |row| {
+                row.get(0)
+            })?,
+        )
     }
 
     pub fn state(&self, key: &str) -> Result<Option<String>> {
@@ -784,6 +808,29 @@ mod tests {
 
         store.remove_ops(&[ops[0].id]).unwrap();
         assert!(store.outbox(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn normalizes_google_reader_item_ids() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+        let mut item = item(
+            "tag:google.com,2005:reader/item/abc",
+            "feed/1",
+            1_000_000,
+            false,
+        );
+        item.id = "tag:google.com,2005:reader/item/abc".into();
+        store.upsert_items(&[item]).unwrap();
+        assert!(store.item("abc").unwrap().is_some());
+        assert!(
+            store
+                .item("tag:google.com,2005:reader/item/abc")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
