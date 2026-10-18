@@ -11,7 +11,8 @@ All business logic lives in a UI-agnostic core, so the Slint frontend can be rep
   queued in an outbox and replayed on the next sync.
 - Token-based auth: the password is exchanged for an auth token and never stored.
 - SQLite cache with a ~500 MB budget for article bodies and media; unread/starred bodies are never evicted.
-- Local search, light/dark themes, and keyboard-first navigation (`j`/`k`, `m`, `s`, `Esc`).
+- Local search, light/dark themes, and keyboard-first navigation (`j`/`k`, `m`, `s`, `Esc`,
+  `PageUp`/`PageDown`/`Space`/`Home`/`End` to scroll the reader).
 - Resizable panes (drag the dividers) and right-click menus for feeds and articles,
   including bulk read/star actions on multi-selected articles (`Ctrl`/`Shift`+click).
 

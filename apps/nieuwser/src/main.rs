@@ -866,6 +866,7 @@ fn select_article(
         return Ok(());
     };
     let id = summary.id.clone();
+    ui.set_reader_scroll_y(0.0);
     let Some(item) = store.item(&id)? else {
         return Ok(());
     };

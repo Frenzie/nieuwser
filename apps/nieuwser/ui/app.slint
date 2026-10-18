@@ -191,6 +191,9 @@ export component MainWindow inherits Window {
     in-out property <length> article-content-y: 0px;
     in-out property <string> search-query;
 
+    in-out property <length> reader-scroll-y: 0px;
+    out property <length> reader-viewport-height: reader-scroll.visible-height;
+    out property <length> reader-content-height: reader-scroll.content-height;
     in-out property <bool> settings-open;
     in-out property <string> settings-url;
     in-out property <string> settings-email;
@@ -221,8 +224,15 @@ export component MainWindow inherits Window {
     callback toggle-read();
     callback toggle-star();
     callback mark-all-read();
+    callback scroll-reader(length);
 
     forward-focus: main-focus;
+
+    scroll-reader(delta) => {
+        root.reader-scroll-y = Math.min(0px, Math.max(
+            root.reader-scroll-y + delta,
+            root.reader-viewport-height - root.reader-content-height));
+    }
 
     main-focus := FocusScope {
         key-pressed(event) => {
@@ -233,6 +243,18 @@ export component MainWindow inherits Window {
                 } else {
                     reject
                 }
+            } else if (event.text == Key.PageDown || (event.text == " " && !event.modifiers.shift)) {
+                root.scroll-reader(0px - root.reader-viewport-height * 0.9);
+                accept
+            } else if (event.text == Key.PageUp || (event.text == " " && event.modifiers.shift)) {
+                root.scroll-reader(root.reader-viewport-height * 0.9);
+                accept
+            } else if (event.text == Key.Home) {
+                root.reader-scroll-y = 0px;
+                accept
+            } else if (event.text == Key.End) {
+                root.scroll-reader(0px - root.reader-content-height);
+                accept
             } else if (event.text == Key.DownArrow
                        || (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
                 root.next-article();
@@ -616,7 +638,8 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    ScrollView {
+                    reader-scroll := ScrollView {
+                        content-y <=> root.reader-scroll-y;
                         VerticalLayout {
                             spacing: 12px;
 
