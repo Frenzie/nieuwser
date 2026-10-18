@@ -16,6 +16,8 @@ use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
 struct UiState {
     streams: Vec<Stream>,
     items: Vec<ItemRow>,
+    selected: HashSet<String>,
+    anchor: Option<String>,
     handle: tokio::runtime::Handle,
     pending_icons: HashSet<String>,
     pending_media: HashSet<String>,
@@ -36,6 +38,8 @@ fn main() -> Result<()> {
     let state = Arc::new(Mutex::new(UiState {
         streams: Vec::new(),
         items: Vec::new(),
+        selected: HashSet::new(),
+        anchor: None,
         handle: runtime.handle().clone(),
         pending_icons: HashSet::new(),
         pending_media: HashSet::new(),
@@ -283,9 +287,73 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
-        ui.on_select_article(move |index| {
+        ui.on_select_article(move |index, ctrl, shift| {
             if let Some(ui) = ui_weak.upgrade() {
-                let _ = select_article(&ui, &store, &state, index, true, true);
+                if !apply_selection(&state, index, ctrl, shift) {
+                    return;
+                }
+                ui.set_article_index(index);
+                push_articles(&ui, &state);
+                let mark_read = !ctrl && !shift;
+                let _ = select_article(&ui, &store, &state, index, mark_read, mark_read);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_context_article(move |index| {
+            if let Some(ui) = ui_weak.upgrade() {
+                if !context_selection(&state, index) {
+                    return;
+                }
+                ui.set_article_index(index);
+                push_articles(&ui, &state);
+                let _ = select_article(&ui, &store, &state, index, false, false);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_set_selection_read(move |read| {
+            if let Some(ui) = ui_weak.upgrade() {
+                mark_selected_read(&ui, &store, &state, read);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_set_selection_starred(move |starred| {
+            if let Some(ui) = ui_weak.upgrade() {
+                mark_selected_starred(&ui, &store, &state, starred);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_selection(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                open_selected(&ui, &state);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_copy_selection_links(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                copy_selected_links(&ui, &state);
             }
         });
     }
@@ -309,27 +377,10 @@ fn bind_callbacks(
         let state = state.clone();
         ui.on_toggle_read(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let index = ui.get_article_index();
-            let Some(item) = selected_item(&state, index) else {
+            let Some(item) = selected_item(&state, ui.get_article_index()) else {
                 return;
             };
-            let read = !item.read;
-            if let Err(error) = store.set_read(&[item.id.clone()], read) {
-                ui.set_status(format!("Update failed: {error}").into());
-                return;
-            }
-            ui.set_status(
-                if read {
-                    "Marked read (queued)"
-                } else {
-                    "Marked unread (queued)"
-                }
-                .into(),
-            );
-            let feed_index = ui.get_feed_index();
-            let _ = load_stream(&ui, &store, &state, feed_index);
-            ui.set_article_index(index);
-            let _ = select_article(&ui, &store, &state, index, false, false);
+            mark_selected_read(&ui, &store, &state, !item.read);
         });
     }
 
@@ -339,27 +390,10 @@ fn bind_callbacks(
         let state = state.clone();
         ui.on_toggle_star(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let index = ui.get_article_index();
-            let Some(item) = selected_item(&state, index) else {
+            let Some(item) = selected_item(&state, ui.get_article_index()) else {
                 return;
             };
-            let starred = !item.starred;
-            if let Err(error) = store.set_starred(&[item.id.clone()], starred) {
-                ui.set_status(format!("Update failed: {error}").into());
-                return;
-            }
-            ui.set_status(
-                if starred {
-                    "Starred (queued)"
-                } else {
-                    "Unstarred (queued)"
-                }
-                .into(),
-            );
-            let feed_index = ui.get_feed_index();
-            let _ = load_stream(&ui, &store, &state, feed_index);
-            ui.set_article_index(index);
-            let _ = select_article(&ui, &store, &state, index, false, false);
+            mark_selected_starred(&ui, &store, &state, !item.starred);
         });
     }
 
@@ -565,11 +599,15 @@ fn load_stream(
 
     let query = ui.get_search_query();
     let items = store.items(&stream, ARTICLE_PAGE, 0, false, Some(query.as_str()))?;
-    let rows = article_rows(&items);
     let has_more = items.len() as i64 == ARTICLE_PAGE;
 
-    state.lock().unwrap().items = items;
-    ui.set_articles(ModelRc::new(VecModel::from(rows)));
+    {
+        let mut state = state.lock().unwrap();
+        state.items = items;
+        state.selected.clear();
+        state.anchor = None;
+    }
+    push_articles(ui, state);
     ui.set_has_more_articles(has_more);
     ui.set_article_index(-1);
     ui.set_reader_title("".into());
@@ -578,7 +616,7 @@ fn load_stream(
     Ok(())
 }
 
-fn article_rows(items: &[ItemRow]) -> Vec<ArticleRow> {
+fn article_rows(items: &[ItemRow], selected: &HashSet<String>) -> Vec<ArticleRow> {
     items
         .iter()
         .map(|item| ArticleRow {
@@ -588,8 +626,17 @@ fn article_rows(items: &[ItemRow]) -> Vec<ArticleRow> {
             time: relative_time(item.published).into(),
             read: item.read,
             starred: item.starred,
+            selected: selected.contains(&item.id),
         })
         .collect()
+}
+
+fn push_articles(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
+    let rows = {
+        let state = state.lock().unwrap();
+        article_rows(&state.items, &state.selected)
+    };
+    ui.set_articles(ModelRc::new(VecModel::from(rows)));
 }
 
 fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Result<()> {
@@ -613,14 +660,9 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
         ui.set_has_more_articles(false);
         return Ok(());
     }
-    let mut rows = {
-        let state = state.lock().unwrap();
-        article_rows(&state.items)
-    };
-    rows.extend(article_rows(&items));
-    ui.set_articles(ModelRc::new(VecModel::from(rows)));
     ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
     state.lock().unwrap().items.extend(items);
+    push_articles(ui, state);
     Ok(())
 }
 
@@ -630,9 +672,27 @@ fn reload_preserving_selection(
     state: &Arc<Mutex<UiState>>,
     stream_index: i32,
 ) -> Result<()> {
-    let selected = selected_item(state, ui.get_article_index()).map(|item| item.id);
+    let (selected, anchor, lead) = {
+        let state = state.lock().unwrap();
+        let lead = state
+            .items
+            .get(ui.get_article_index().max(0) as usize)
+            .filter(|_| ui.get_article_index() >= 0)
+            .map(|item| item.id.clone());
+        (state.selected.clone(), state.anchor.clone(), lead)
+    };
     load_stream(ui, store, state, stream_index)?;
-    if let Some(id) = selected {
+    {
+        let mut state = state.lock().unwrap();
+        let items = &state.items;
+        state.selected = selected
+            .into_iter()
+            .filter(|id| items.iter().any(|item| &item.id == id))
+            .collect();
+        state.anchor = anchor.filter(|id| state.selected.contains(id));
+    }
+    push_articles(ui, state);
+    if let Some(id) = lead {
         let found = state
             .lock()
             .unwrap()
@@ -706,8 +766,14 @@ fn select_article(
 
     if mark_read && ui.get_mark_read_on_open() && !item.read {
         store.set_read(&[id.clone()], true)?;
+        {
+            let mut state = state.lock().unwrap();
+            if let Some(item) = state.items.iter_mut().find(|item| item.id == id) {
+                item.read = true;
+            }
+        }
+        push_articles(ui, state);
         refresh_feeds(ui, store, state)?;
-        reload_preserving_selection(ui, store, state, ui.get_feed_index())?;
     }
 
     if allow_fetch && needs_fetch {
@@ -888,7 +954,171 @@ fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>
     };
     ui.set_article_index(next);
     ui.set_article_content_y(next as f32 * 64.0);
+    apply_selection(state, next, false, false);
+    push_articles(ui, state);
     let _ = select_article(ui, store, state, next, true, true);
+}
+
+fn apply_selection(state: &Arc<Mutex<UiState>>, index: i32, ctrl: bool, shift: bool) -> bool {
+    let mut state = state.lock().unwrap();
+    let Some(item) = state.items.get(index.max(0) as usize) else {
+        return false;
+    };
+    let id = item.id.clone();
+    if shift {
+        let anchor = state.anchor.clone();
+        let anchor_index = anchor
+            .and_then(|anchor| state.items.iter().position(|item| item.id == anchor))
+            .unwrap_or(index.max(0) as usize);
+        let (first, last) = (
+            anchor_index.min(index.max(0) as usize),
+            anchor_index.max(index.max(0) as usize),
+        );
+        if !ctrl {
+            state.selected.clear();
+        }
+        let ids: Vec<String> = state.items[first..=last]
+            .iter()
+            .map(|item| item.id.clone())
+            .collect();
+        state.selected.extend(ids);
+    } else if ctrl {
+        if !state.selected.remove(&id) {
+            state.selected.insert(id.clone());
+        }
+        state.anchor = Some(id);
+    } else {
+        state.selected.clear();
+        state.selected.insert(id.clone());
+        state.anchor = Some(id);
+    }
+    true
+}
+
+fn context_selection(state: &Arc<Mutex<UiState>>, index: i32) -> bool {
+    let mut state = state.lock().unwrap();
+    let Some(item) = state.items.get(index.max(0) as usize) else {
+        return false;
+    };
+    let id = item.id.clone();
+    if !state.selected.contains(&id) {
+        state.selected.clear();
+        state.selected.insert(id.clone());
+        state.anchor = Some(id);
+    }
+    true
+}
+
+fn mark_selected_read(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    read: bool,
+) {
+    let ids = selected_ids(state);
+    if ids.is_empty() {
+        return;
+    }
+    if let Err(error) = store.set_read(&ids, read) {
+        ui.set_status(format!("Update failed: {error}").into());
+        return;
+    }
+    {
+        let mut state = state.lock().unwrap();
+        for item in &mut state.items {
+            if ids.contains(&item.id) {
+                item.read = read;
+            }
+        }
+    }
+    push_articles(ui, state);
+    let _ = refresh_feeds(ui, store, state);
+    ui.set_status(
+        format!(
+            "Marked {} article(s) {} (queued)",
+            ids.len(),
+            if read { "read" } else { "unread" }
+        )
+        .into(),
+    );
+}
+
+fn mark_selected_starred(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    starred: bool,
+) {
+    let ids = selected_ids(state);
+    if ids.is_empty() {
+        return;
+    }
+    if let Err(error) = store.set_starred(&ids, starred) {
+        ui.set_status(format!("Update failed: {error}").into());
+        return;
+    }
+    {
+        let mut state = state.lock().unwrap();
+        for item in &mut state.items {
+            if ids.contains(&item.id) {
+                item.starred = starred;
+            }
+        }
+    }
+    push_articles(ui, state);
+    ui.set_status(
+        format!(
+            "{} {} article(s) (queued)",
+            if starred { "Starred" } else { "Unstarred" },
+            ids.len()
+        )
+        .into(),
+    );
+}
+
+fn selected_ids(state: &Arc<Mutex<UiState>>) -> Vec<String> {
+    state.lock().unwrap().selected.iter().cloned().collect()
+}
+
+fn selected_links(state: &Arc<Mutex<UiState>>) -> Vec<String> {
+    let state = state.lock().unwrap();
+    let mut seen = HashSet::new();
+    state
+        .items
+        .iter()
+        .filter(|item| state.selected.contains(&item.id))
+        .filter_map(|item| item.href.as_deref())
+        .filter(|href| !href.trim().is_empty())
+        .filter(|href| seen.insert(href.to_string()))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn open_selected(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
+    let links = selected_links(state);
+    if links.is_empty() {
+        ui.set_status("No link for the selected article(s).".into());
+        return;
+    }
+    let opened = links
+        .iter()
+        .filter(|link| open_external(link).is_ok())
+        .count();
+    ui.set_status(format!("Opened {opened} link(s).").into());
+}
+
+fn copy_selected_links(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
+    let links = selected_links(state);
+    if links.is_empty() {
+        ui.set_status("No link for the selected article(s).".into());
+        return;
+    }
+    let result =
+        arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(links.join("\n")));
+    match result {
+        Ok(()) => ui.set_status(format!("Copied {} link(s).", links.len()).into()),
+        Err(error) => ui.set_status(format!("Could not copy link: {error}").into()),
+    }
 }
 
 fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemRow> {

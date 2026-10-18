@@ -15,6 +15,7 @@ export struct ArticleRow {
     time: string,
     read: bool,
     starred: bool,
+    selected: bool,
 }
 
 export struct ReaderBlock {
@@ -103,6 +104,45 @@ component Splitter inherits Rectangle {
     }
 }
 
+component MenuButton inherits Rectangle {
+    in property <string> text;
+    callback activated();
+    height: 30px;
+    background: touch.has-hover ? Theme.article-selected : transparent;
+
+    Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.text;
+        font-size: 13px;
+        color: Theme.text;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.activated(); }
+    }
+}
+
+component SelectionContext inherits ContextMenuArea {
+    in property <bool> has-selection;
+    callback open-requested();
+    callback copy-requested();
+    callback set-read(bool);
+    callback set-starred(bool);
+    Menu {
+        MenuItem { title: "Open in browser"; enabled: root.has-selection; activated => { root.open-requested(); } }
+        MenuItem { title: "Copy link"; enabled: root.has-selection; activated => { root.copy-requested(); } }
+        MenuSeparator {}
+        MenuItem { title: "Mark as read"; enabled: root.has-selection; activated => { root.set-read(true); } }
+        MenuItem { title: "Mark as unread"; enabled: root.has-selection; activated => { root.set-read(false); } }
+        MenuSeparator {}
+        MenuItem { title: "Add star"; enabled: root.has-selection; activated => { root.set-starred(true); } }
+        MenuItem { title: "Remove star"; enabled: root.has-selection; activated => { root.set-starred(false); } }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "Nieuwser";
     preferred-width: 1280px;
@@ -121,6 +161,17 @@ export component MainWindow inherits Window {
     property <length> drag-start-width;
     property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
     property <length> max-list-width: root.width - root.feed-width - 340px < 240px ? 240px : root.width - root.feed-width - 340px;
+    property <length> menu-x;
+    property <length> menu-y;
+    property <int> menu-kind: 0;
+    property <bool> menu-open: false;
+
+    public function open-menu(kind: int, pointer-x: length, pointer-y: length) {
+        root.menu-kind = kind;
+        root.menu-x = pointer-x > root.width - 220px ? root.width - 220px : pointer-x;
+        root.menu-y = pointer-y > root.height - 230px ? root.height - 230px : pointer-y;
+        root.menu-open = true;
+    }
 
     init => {
         Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light;
@@ -157,7 +208,12 @@ export component MainWindow inherits Window {
     callback next-article();
     callback prev-article();
     callback select-feed(int);
-    callback select-article(int);
+    callback select-article(int, bool, bool);
+    callback context-article(int);
+    callback set-selection-read(bool);
+    callback set-selection-starred(bool);
+    callback open-selection();
+    callback copy-selection-links();
     callback load-more();
     callback search(string);
     callback open-link(string);
@@ -194,6 +250,10 @@ export component MainWindow inherits Window {
                 reject
             }
         }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
 
         VerticalLayout {
         Rectangle {
@@ -264,6 +324,17 @@ export component MainWindow inherits Window {
                 width: root.feed-width;
                 background: Theme.surface-alt;
 
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: !root.settings-open;
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                            root.open-menu(1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                }
+
                 VerticalLayout {
                     padding: 12px;
                     spacing: 8px;
@@ -319,6 +390,13 @@ export component MainWindow inherits Window {
                                 width: parent.width;
                                 height: parent.height;
                                 enabled: !root.settings-open;
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.feed-index = i;
+                                        root.select-feed(i);
+                                        root.open-menu(1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    }
+                                }
                                 clicked => {
                                     root.feed-index = i;
                                     root.select-feed(i);
@@ -348,6 +426,17 @@ export component MainWindow inherits Window {
             Rectangle {
                 width: root.list-width;
                 background: Theme.surface;
+
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: !root.settings-open;
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                            root.open-menu(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                }
 
                 VerticalLayout {
                     padding: 10px;
@@ -389,9 +478,10 @@ export component MainWindow inherits Window {
 
                     ListView {
                         content-y <=> root.article-content-y;
-                        for article[i] in root.articles : Rectangle {                            height: 64px;
+                        for article[i] in root.articles : Rectangle {
+                            height: 64px;
                             border-radius: 6px;
-                            background: i == root.article-index ? Theme.article-selected : transparent;
+                            background: article.selected ? Theme.article-selected : transparent;
 
                             HorizontalLayout {
                                 padding: 8px;
@@ -439,9 +529,13 @@ export component MainWindow inherits Window {
                                 width: parent.width;
                                 height: parent.height;
                                 enabled: !root.settings-open;
-                                clicked => {
-                                    root.article-index = i;
-                                    root.select-article(i);
+                                pointer-event(event) => {
+                                    if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
+                                        root.context-article(i);
+                                        root.open-menu(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    } else if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
+                                        root.select-article(i, event.modifiers.control, event.modifiers.shift);
+                                    }
                                 }
                             }
                         }
@@ -475,6 +569,13 @@ export component MainWindow inherits Window {
 
             Rectangle {
                 background: Theme.surface;
+
+                SelectionContext {
+                    has-selection: root.article-index >= 0;
+                    open-requested => { root.open-selection(); }
+                    copy-requested => { root.copy-selection-links(); }
+                    set-read(value) => { root.set-selection-read(value); }
+                    set-starred(value) => { root.set-selection-starred(value); }
 
                 VerticalLayout {
                     padding-top: 24px;
@@ -621,11 +722,119 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                }
             }
         }
     }
+
+    if root.menu-open : Rectangle {
+        width: root.width;
+        height: root.height;
+        background: transparent;
+
+        TouchArea {
+            clicked => { root.menu-open = false; }
+        }
+
+        VerticalLayout {
+            Rectangle { height: root.menu-y; }
+            HorizontalLayout {
+                Rectangle { width: root.menu-x; }
+                Rectangle {
+                    width: 210px;
+                    height: root.menu-kind == 1 ? 72px : 210px;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    border-radius: 6px;
+                    clip: true;
+
+                    MenuButton {
+                        x: 4px; y: 4px; width: parent.width - 8px; height: 30px;
+                        text: "Mark all as read";
+                        visible: root.menu-kind == 1;
+                        activated => {
+                            root.menu-open = false;
+                            root.mark-all-read();
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 36px; width: parent.width - 8px; height: 30px;
+                        text: "Refresh";
+                        visible: root.menu-kind == 1;
+                        activated => {
+                            root.menu-open = false;
+                            root.refresh();
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 4px; width: parent.width - 8px; height: 30px;
+                        text: "Open in browser";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.open-selection();
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 36px; width: parent.width - 8px; height: 30px;
+                        text: "Copy link";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.copy-selection-links();
+                        }
+                    }
+                    Rectangle { x: 4px; y: 68px; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
+                    MenuButton {
+                        x: 4px; y: 71px; width: parent.width - 8px; height: 30px;
+                        text: "Mark as read";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.set-selection-read(true);
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 103px; width: parent.width - 8px; height: 30px;
+                        text: "Mark as unread";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.set-selection-read(false);
+                        }
+                    }
+                    Rectangle { x: 4px; y: 135px; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
+                    MenuButton {
+                        x: 4px; y: 138px; width: parent.width - 8px; height: 30px;
+                        text: "Add star";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.set-selection-starred(true);
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 170px; width: parent.width - 8px; height: 30px;
+                        text: "Remove star";
+                        visible: root.menu-kind == 2;
+                        activated => {
+                            root.menu-open = false;
+                            root.set-selection-starred(false);
+                        }
+                    }
+        
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Rectangle { vertical-stretch: 1; }
+        }
     }
 
+        }
+
+
+    }
     if root.settings-open : FocusScope {
         width: parent.width;
         height: parent.height;

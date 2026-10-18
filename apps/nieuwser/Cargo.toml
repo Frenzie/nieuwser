@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arboard = { version = "3", default-features = false }
 directories = "6"
 nieuwser-core = { path = "../../crates/nieuwser-core" }
 slint.workspace = true

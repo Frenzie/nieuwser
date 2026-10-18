@@ -3492,6 +3492,7 @@ name = "nieuwser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "directories",
  "nieuwser-core",
  "slint",
