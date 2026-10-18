@@ -3,7 +3,7 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
-Status: M0/M1/M2/M4 complete; M3 in progress (2026-10-18).
+Status: M0–M4 complete; M5 in progress (2026-10-18).
 
 ## Decisions
 
@@ -88,9 +88,9 @@ also switches the standard Slint widget palette.
 - **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
 - **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(done)*
 - **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(done)*
-- **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(in progress)*
+- **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(done)*
 - **M4 — content:** reader document IR, image cache, feed icons. *(done)*
-- **M5 — hardening:** large accounts, retries, packaging.
+- **M5 — hardening:** large accounts, retries, packaging. *(in progress)*
 
 ## Current status
 
@@ -151,5 +151,4 @@ cargo run -p nieuwser
 
 - Final app name and license.
 - Whether to add a webview for full HTML fidelity after v1.
-- Cache budget semantics (500 MB) and eviction policy.
 - Multi-account and feed management timing.
