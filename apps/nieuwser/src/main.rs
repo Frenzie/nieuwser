@@ -699,6 +699,7 @@ fn to_reader_block(store: &Store, block: Block) -> ReaderBlock {
         BlockKind::Code => "code".into(),
         BlockKind::Rule => "rule".into(),
         BlockKind::Image => "image".into(),
+        BlockKind::Table => "table".into(),
     };
     let text = if block.kind == BlockKind::Code {
         StyledText::from_plain_text(&block.text)

@@ -13,6 +13,7 @@ pub enum BlockKind {
     Code,
     Rule,
     Image,
+    Table,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +104,7 @@ fn collect_element(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>)
         }
         "ul" => collect_list(el, false, 0, base, blocks),
         "ol" => collect_list(el, true, 0, base, blocks),
+        "table" => collect_table(el, base, blocks),
         "blockquote" => {
             collect_inline_images(el, base, blocks);
             let text = inline_children(el, base);
@@ -182,6 +184,57 @@ fn collect_list(
             }
         }
     }
+}
+
+fn collect_table(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>) {
+    let mut rows = Vec::new();
+    for child in el.children().filter_map(ElementRef::wrap) {
+        match child.value().name() {
+            "tr" => rows.push(child),
+            "thead" | "tbody" | "tfoot" => rows.extend(
+                child
+                    .children()
+                    .filter_map(ElementRef::wrap)
+                    .filter(|element| element.value().name() == "tr"),
+            ),
+            _ => {}
+        }
+    }
+
+    let mut lines = Vec::new();
+    for row in rows {
+        let cells: Vec<String> = row
+            .children()
+            .filter_map(ElementRef::wrap)
+            .filter(|cell| matches!(cell.value().name(), "td" | "th"))
+            .map(|cell| {
+                inline_children(&cell, base)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        if cells.iter().any(|cell| !cell.is_empty()) {
+            lines.push(cells.join("  |  "));
+        }
+    }
+    if lines.is_empty() {
+        collect_container(el, base, blocks);
+        return;
+    }
+
+    let label = el
+        .children()
+        .filter_map(ElementRef::wrap)
+        .find(|child| child.value().name() == "caption")
+        .map(|caption| inline_children(&caption, base).trim().to_string())
+        .unwrap_or_default();
+    blocks.push(Block {
+        kind: BlockKind::Table,
+        label,
+        text: lines.join("\n"),
+        url: None,
+    });
 }
 
 fn collect_inline_images(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>) {
@@ -497,6 +550,19 @@ mod tests {
         );
         assert_eq!(blocks[1].kind, BlockKind::Paragraph);
         assert_eq!(blocks[1].text, "Text after.");
+    }
+
+    #[test]
+    fn renders_tables_as_aligned_rows() {
+        let blocks = html_to_blocks(
+            "<table><caption>Sizes</caption><thead><tr><th>Name</th><th>Value</th></tr></thead>\
+             <tbody><tr><td>A</td><td>1</td></tr><tr><td>B</td><td>2</td></tr></tbody></table>",
+            None,
+        );
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].kind, BlockKind::Table);
+        assert_eq!(blocks[0].label, "Sizes");
+        assert_eq!(blocks[0].text, "Name  |  Value\nA  |  1\nB  |  2");
     }
 
     #[test]

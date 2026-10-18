@@ -9,7 +9,7 @@ Status: M0/M1/M2/M4 complete; M3 in progress (2026-10-18).
 
 - **UI:** Slint. The UI must stay replaceable, so all business logic lives in `nieuwser-core`.
 - **Article view:** block-level document IR (headings, paragraphs, lists, quotes, code, rules,
-  images) rendered with native Slint widgets; inline links open externally. No embedded webview.
+  tables, images) rendered with native Slint widgets; inline links open externally. No embedded webview.
 - **Sync:** FreshRSS Google Reader API (`/api/greader.php`), not Fever.
 - **Storage:** SQLite via `rusqlite`; metadata kept indefinitely, ~500 MB default budget for
   article bodies and media. Never evict unread/starred bodies. Oldest read/unstarred bodies are
@@ -104,19 +104,18 @@ Working today:
   navigation, local search, feed selection, article list, rich block-based reader with clickable
   links, cached feed icons and article images, read/star/mark-all actions, manual refresh that
   preserves the open article.
-- Tests: 17 core tests covering API parsing/auth, reader blocks, storage/migration,
+- Tests: 18 core tests covering API parsing/auth, reader blocks, storage/migration,
   reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
   read-on-open, keyboard navigation, local search, on-demand article restore after cache
-  eviction, rich rendering of headings, lists, links, images, and cached feed icons.
+  eviction, rich rendering of headings, lists, links, tables, images, and cached feed icons.
 
 Next up:
 
 1. Themes and layout polish.
 2. Pagination or a larger item limit for big accounts.
-3. Better table handling in the reader.
 
 
 ## How to run

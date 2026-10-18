@@ -34,12 +34,13 @@ component ReaderText inherits StyledText {
         : kind == "h3" ? 18px
         : kind == "h4" || kind == "h5" || kind == "h6" ? 16px
         : kind == "code" ? 13px
+        : kind == "table" ? 12px
         : kind == "image" ? 12px
         : 15px;
     default-color: kind == "quote" ? #55554f
         : kind == "image" ? #6b6b66
         : #242422;
-    default-font-family: kind == "code" ? "monospace" : "";
+    default-font-family: kind == "code" || kind == "table" ? "monospace" : "";
     horizontal-stretch: 1;
 }
 
@@ -442,11 +443,18 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
-                                if block.kind == "code" : Rectangle {
+                                if block.kind == "code" || block.kind == "table" : Rectangle {
                                     background: #f4f4f1;
                                     border-radius: 6px;
                                     VerticalLayout {
                                         padding: 10px;
+                                        spacing: 4px;
+                                        if block.label != "" : Text {
+                                            text: block.label;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                            color: #77776f;
+                                        }
                                         ReaderText {
                                             text: block.text;
                                             kind: block.kind;
@@ -454,7 +462,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
-                                if block.kind != "rule" && block.kind != "image" && block.kind != "code" : HorizontalLayout {
+                                if block.kind != "rule" && block.kind != "image" && block.kind != "code" && block.kind != "table" : HorizontalLayout {
                                     padding-left: block.indent * 18px;
                                     spacing: 8px;
 
