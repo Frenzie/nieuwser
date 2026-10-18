@@ -1,9 +1,18 @@
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use crate::store::DEFAULT_CACHE_BYTES;
 use crate::{Error, Result, Store};
 
 pub const MAX_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+
+static IMAGE_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .user_agent(concat!("Nieuwser/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("image HTTP client")
+});
 
 /// Returns an image from the local cache, downloading and caching it if needed.
 pub async fn fetch_image(store: &Store, url: &str) -> Result<Vec<u8>> {
@@ -17,11 +26,7 @@ pub async fn fetch_image(store: &Store, url: &str) -> Result<Vec<u8>> {
         return Err(Error::Other(format!("unsupported image URL: {url}")));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent(concat!("Nieuwser/", env!("CARGO_PKG_VERSION")))
-        .build()?;
-    let response = client.get(parsed).send().await?;
+    let response = IMAGE_CLIENT.get(parsed).send().await?;
     let status = response.status();
     if !status.is_success() {
         return Err(Error::Http {
