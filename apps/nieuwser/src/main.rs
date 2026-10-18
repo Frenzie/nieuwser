@@ -1,6 +1,6 @@
 slint::include_modules!();
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -27,6 +27,13 @@ struct UiState {
 
 const ARTICLE_PAGE: i64 = 300;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
+const ICON_IMAGE_SIZE: u32 = 64;
+const READER_IMAGE_SIZE: u32 = 1024;
+const IMAGE_CACHE_LIMIT: usize = 48;
+
+thread_local! {
+    static IMAGE_CACHE: RefCell<HashMap<(String, u32), slint::Image>> = RefCell::new(HashMap::new());
+}
 
 fn main() -> Result<()> {
     let db_path = db_path();
@@ -552,10 +559,12 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
             continue;
         }
         let icon_url = feed.icon_url.clone();
-        let icon = icon_url.as_deref().and_then(|url| cached_image(store, url));
+        let icon = icon_url
+            .as_deref()
+            .and_then(|url| cached_image(url, ICON_IMAGE_SIZE));
         if icon.is_none() {
             if let Some(url) = icon_url.as_deref() {
-                spawn_icon_fetch(ui, store, state, url);
+                spawn_icon_fetch(ui, store, state, &feed.id, url);
             }
         }
         rows.push(FeedRow {
@@ -573,12 +582,58 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
     Ok(())
 }
 
-fn cached_image(store: &Store, url: &str) -> Option<slint::Image> {
-    let data = store.cached_media(url).ok().flatten()?;
-    slint::Image::load_from_data(&data, None).ok()
+fn cached_image(url: &str, max_size: u32) -> Option<slint::Image> {
+    IMAGE_CACHE.with(|cache| cache.borrow().get(&(url.to_string(), max_size)).cloned())
 }
 
-fn spawn_icon_fetch(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>, url: &str) {
+fn remember_image(url: &str, max_size: u32, image: slint::Image) -> slint::Image {
+    IMAGE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= IMAGE_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert((url.to_string(), max_size), image.clone());
+        image
+    })
+}
+
+fn decode_image(data: &[u8], max_size: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let image = image::load_from_memory(data).ok()?;
+    let image = if image.width() > max_size || image.height() > max_size {
+        image.resize(max_size, max_size, image::imageops::FilterType::Triangle)
+    } else {
+        image
+    };
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some((rgba.into_raw(), width, height))
+}
+
+fn image_from_rgba(data: Vec<u8>, width: u32, height: u32) -> slint::Image {
+    let buffer =
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&data, width, height);
+    slint::Image::from_rgba8(buffer)
+}
+
+async fn decoded_image(
+    store: Arc<Store>,
+    url: String,
+    max_size: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let data = fetch_image(&store, &url).await.ok()?;
+    tokio::task::spawn_blocking(move || decode_image(&data, max_size))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn spawn_icon_fetch(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    feed_id: &str,
+    url: &str,
+) {
     let url = url.to_string();
     if !state.lock().unwrap().pending_icons.insert(url.clone()) {
         return;
@@ -586,12 +641,27 @@ fn spawn_icon_fetch(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiSta
     let ui_weak = ui.as_weak();
     let store = store.clone();
     let state = state.clone();
+    let feed_id = feed_id.to_string();
     let handle = state.lock().unwrap().handle.clone();
     handle.spawn(async move {
-        let _ = fetch_image(&store, &url).await;
+        let decoded = decoded_image(store, url.clone(), ICON_IMAGE_SIZE).await;
         let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                let _ = refresh_feeds(&ui, &store, &state);
+            state.lock().unwrap().pending_icons.remove(&url);
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Some((data, width, height)) = decoded else {
+                return;
+            };
+            let image = remember_image(&url, ICON_IMAGE_SIZE, image_from_rgba(data, width, height));
+            let model = ui.get_feeds();
+            for index in 0..model.row_count() {
+                let Some(mut row) = model.row_data(index) else {
+                    continue;
+                };
+                if row.id.as_str() == feed_id {
+                    row.icon = image;
+                    model.set_row_data(index, row);
+                    break;
+                }
             }
         });
     });
@@ -803,12 +873,14 @@ fn select_article(
         let rows: Vec<ReaderBlock> = blocks
             .into_iter()
             .map(|block| {
-                if let Some(url) = block.url.as_deref() {
-                    if cached_image(store, url).is_none() {
-                        image_urls.push(url.to_string());
-                    }
+                let image = block
+                    .url
+                    .as_deref()
+                    .and_then(|url| cached_image(url, READER_IMAGE_SIZE));
+                if block.url.is_some() && image.is_none() {
+                    image_urls.push(block.url.clone().unwrap_or_default());
                 }
-                to_reader_block(store, block)
+                to_reader_block(block, image)
             })
             .collect();
         if rows.is_empty() {
@@ -881,7 +953,7 @@ fn select_article(
     Ok(())
 }
 
-fn to_reader_block(store: &Store, block: Block) -> ReaderBlock {
+fn to_reader_block(block: Block, image: Option<slint::Image>) -> ReaderBlock {
     let kind = match block.kind {
         BlockKind::Heading(level) => format!("h{level}"),
         BlockKind::Paragraph => "p".into(),
@@ -899,9 +971,7 @@ fn to_reader_block(store: &Store, block: Block) -> ReaderBlock {
             .unwrap_or_else(|_| StyledText::from_plain_text(&block.text))
     };
     let source = block.url.unwrap_or_default();
-    let image = (!source.is_empty())
-        .then(|| cached_image(store, &source))
-        .flatten();
+    let has_image = image.is_some();
     ReaderBlock {
         kind: kind.into(),
         label: block.label.into(),
@@ -911,7 +981,7 @@ fn to_reader_block(store: &Store, block: Block) -> ReaderBlock {
             _ => 0,
         },
         source: source.into(),
-        has_image: image.is_some(),
+        has_image,
         image: image.unwrap_or_default(),
     }
 }
@@ -931,14 +1001,18 @@ fn spawn_reader_images(
         let state = state.clone();
         let handle = state.lock().unwrap().handle.clone();
         handle.spawn(async move {
-            let result = fetch_image(&store, &url).await;
+            let decoded = decoded_image(store, url.clone(), READER_IMAGE_SIZE).await;
             let _ = slint::invoke_from_event_loop(move || {
                 state.lock().unwrap().pending_media.remove(&url);
                 let Some(ui) = ui_weak.upgrade() else { return };
-                let Ok(data) = result else { return };
-                let Ok(image) = slint::Image::load_from_data(&data, None) else {
+                let Some((data, width, height)) = decoded else {
                     return;
                 };
+                let image = remember_image(
+                    &url,
+                    READER_IMAGE_SIZE,
+                    image_from_rgba(data, width, height),
+                );
                 let model = ui.get_reader_blocks();
                 for index in 0..model.row_count() {
                     let Some(mut row) = model.row_data(index) else {

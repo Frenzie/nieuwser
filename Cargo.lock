@@ -3494,6 +3494,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "directories",
+ "image",
  "nieuwser-core",
  "slint",
  "slint-build",

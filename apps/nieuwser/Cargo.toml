@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 arboard = { version = "3", default-features = false }
 directories = "6"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 nieuwser-core = { path = "../../crates/nieuwser-core" }
 slint.workspace = true
 tokio.workspace = true
