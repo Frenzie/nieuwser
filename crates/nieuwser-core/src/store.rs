@@ -450,10 +450,16 @@ impl Store {
             clauses.push("items.read = 0".into());
         }
         if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
-            clauses.push("(items.title LIKE ? OR items.content_html LIKE ?)".into());
+            clauses.push(
+                "(items.title LIKE ? OR items.author LIKE ?
+                  OR items.content_html LIKE ? OR items.summary_html LIKE ?
+                  OR COALESCE(feeds.title, '') LIKE ?)"
+                    .into(),
+            );
             let pattern = format!("%{}%", term.trim());
-            values.push(Value::Text(pattern.clone()));
-            values.push(Value::Text(pattern));
+            for _ in 0..5 {
+                values.push(Value::Text(pattern.clone()));
+            }
         }
         values.push(Value::Integer(limit.clamp(1, 1000)));
         values.push(Value::Integer(offset.max(0)));
@@ -1008,6 +1014,36 @@ mod tests {
             .unwrap();
         store.set_auth_token(Some("token")).unwrap();
         assert_eq!(store.auth_token().unwrap().as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn searches_titles_authors_and_bodies() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+
+        let mut first = item("1", "feed/1", 2_000_000, true);
+        first.title = "Rust news".into();
+        let mut second = item("2", "feed/1", 1_000_000, true);
+        second.author = Some("Alice".into());
+        second.content = Some(Content {
+            content: "<p>FreshRSS rocks</p>".into(),
+        });
+        store.upsert_items(&[first, second]).unwrap();
+
+        let search = |term: &str| {
+            store
+                .items(&Stream::All, 10, 0, false, Some(term))
+                .unwrap()
+                .into_iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(search("rust"), vec!["1"]);
+        assert_eq!(search("alice"), vec!["2"]);
+        assert_eq!(search("freshrss"), vec!["2"]);
+        assert_eq!(search("one"), vec!["1", "2"]);
     }
 
     #[test]

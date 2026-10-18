@@ -34,6 +34,7 @@ export component MainWindow inherits Window {
     in property <bool> syncing: false;
     in-out property <bool> mark-read-on-open: true;
     in-out property <length> article-content-y: 0px;
+    in-out property <string> search-query;
 
     in-out property <bool> settings-open;
     in-out property <string> settings-url;
@@ -52,6 +53,7 @@ export component MainWindow inherits Window {
     callback prev-article();
     callback select-feed(int);
     callback select-article(int);
+    callback search(string);
     callback toggle-read();
     callback toggle-star();
     callback mark-all-read();
@@ -238,6 +240,14 @@ export component MainWindow inherits Window {
                             clicked => {
                                 root.mark-all-read();
                             }
+                        }
+                    }
+
+                    LineEdit {
+                        placeholder-text: "Search articles…";
+                        text <=> root.search-query;
+                        edited => {
+                            root.search(root.search-query);
                         }
                     }
 

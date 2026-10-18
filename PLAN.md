@@ -96,21 +96,22 @@ Working today:
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
-  navigation, feed selection, article list, plain-text reader view, read/star/mark-all actions,
-  manual refresh that preserves the open article.
-- Tests: 11 core tests covering API parsing/auth, storage/migration, reconciliation, cache
-  eviction, and a mocked end-to-end sync.
+  navigation, local search, feed selection, article list, plain-text reader view,
+  read/star/mark-all actions, manual refresh that preserves the open article.
+- Tests: 12 core tests covering API parsing/auth, storage/migration, reconciliation, search,
+  cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
-  read-on-open, keyboard navigation, and on-demand article restore after cache eviction.
+  read-on-open, keyboard navigation, local search, and on-demand article restore after cache
+  eviction.
 
 Next up:
 
 1. Image/feed-icon caching (on-disk HTTP cache).
 2. Structured reader document IR (headings, links, lists, images) instead of plain text.
-3. Search in the desktop UI (the store/CLI already support it).
-4. Themes and layout polish.
+3. Themes and layout polish.
+4. Pagination or a larger item limit for big accounts.
 
 
 ## How to run

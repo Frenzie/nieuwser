@@ -219,6 +219,20 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
+        ui.on_search(move |_query| {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_article_content_y(0.0);
+                if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
+                    ui.set_status(format!("Search failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
         ui.on_select_feed(move |index| {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_article_content_y(0.0);
@@ -466,7 +480,8 @@ fn load_stream(
         return Ok(());
     };
 
-    let items = store.items(&stream, 300, 0, false, None)?;
+    let query = ui.get_search_query();
+    let items = store.items(&stream, 300, 0, false, Some(query.as_str()))?;
     let rows: Vec<ArticleRow> = items
         .iter()
         .map(|item| ArticleRow {
