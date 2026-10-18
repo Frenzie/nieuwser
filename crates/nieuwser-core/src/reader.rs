@@ -254,7 +254,11 @@ fn image_block(el: &ElementRef, base: Option<&Url>) -> Option<Block> {
         .attr("src")
         .filter(|src| !src.trim().is_empty())
         .or_else(|| el.value().attr("data-src"))?;
-    let src = resolve_url(raw, base, false)?;
+    let src = if raw.trim().starts_with("data:image/") {
+        raw.trim().to_string()
+    } else {
+        resolve_url(raw, base, false)?
+    };
     let alt = el.value().attr("alt").unwrap_or("").trim();
     Some(Block {
         kind: BlockKind::Image,
@@ -263,7 +267,11 @@ fn image_block(el: &ElementRef, base: Option<&Url>) -> Option<Block> {
         } else {
             alt.to_string()
         },
-        text: format!("[Open image](<{}>)", escape_url(&src)),
+        text: if src.starts_with("data:") {
+            String::new()
+        } else {
+            format!("[Open image](<{}>)", escape_url(&src))
+        },
         url: Some(src),
     })
 }
@@ -536,6 +544,20 @@ fn is_skipped(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_embedded_data_images() {
+        let blocks = html_to_blocks(
+            "<p><img src='data:image/png;base64,aGVsbG8=' alt='inline'></p>",
+            None,
+        );
+        assert_eq!(blocks[0].kind, BlockKind::Image);
+        assert_eq!(
+            blocks[0].url.as_deref(),
+            Some("data:image/png;base64,aGVsbG8=")
+        );
+        assert!(blocks[0].text.is_empty());
+    }
 
     #[test]
     fn promotes_inline_images_out_of_paragraphs() {

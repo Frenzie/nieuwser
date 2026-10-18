@@ -105,9 +105,9 @@ Working today:
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, feed selection, paginated article list, rich block-based reader with
-  clickable links, cached feed icons and article images, persisted light/dark theme,
+  clickable links, cached feed icons, article images, and embedded data images, persisted light/dark theme,
   read/star/mark-all actions, manual refresh that preserves the open article.
-- Tests: 18 core tests covering API parsing/auth, reader blocks, storage/migration,
+- Tests: 20 core tests covering API parsing/auth, reader blocks, storage/migration,
   reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
