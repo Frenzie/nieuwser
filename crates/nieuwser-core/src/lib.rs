@@ -1,6 +1,7 @@
 //! Core for the Nieuwser FreshRSS client: API, storage, and sync.
 
 pub mod api;
+pub mod media;
 pub mod models;
 pub mod reader;
 pub mod store;

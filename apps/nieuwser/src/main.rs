@@ -1,20 +1,24 @@
 slint::include_modules!();
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use nieuwser_core::media::fetch_image;
 use nieuwser_core::models::Stream;
 use nieuwser_core::reader::{Block, BlockKind, html_to_blocks};
 use nieuwser_core::store::ItemRow;
 use nieuwser_core::{Client, Store, SyncEngine};
-use slint::{ComponentHandle, ModelRc, StyledText, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
 
 struct UiState {
     streams: Vec<Stream>,
     items: Vec<ItemRow>,
     handle: tokio::runtime::Handle,
+    pending_icons: HashSet<String>,
+    pending_media: HashSet<String>,
 }
 
 fn main() -> Result<()> {
@@ -31,6 +35,8 @@ fn main() -> Result<()> {
         streams: Vec::new(),
         items: Vec::new(),
         handle: runtime.handle().clone(),
+        pending_icons: HashSet::new(),
+        pending_media: HashSet::new(),
     }));
 
     refresh_feeds(&ui, &store, &state)?;
@@ -440,7 +446,7 @@ fn last_synced_text(store: &Store) -> String {
     }
 }
 
-fn refresh_feeds(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Result<()> {
+fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) -> Result<()> {
     let feeds = store.feeds()?;
     let total_unread = store.total_unread()?;
     let mut rows = vec![
@@ -449,12 +455,14 @@ fn refresh_feeds(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) ->
             title: "All items".into(),
             folder: String::new().into(),
             unread: total_unread as i32,
+            icon: slint::Image::default(),
         },
         FeedRow {
             id: "starred".into(),
             title: "Starred".into(),
             folder: String::new().into(),
             unread: 0,
+            icon: slint::Image::default(),
         },
     ];
     let mut streams = vec![Stream::All, Stream::Starred];
@@ -463,11 +471,19 @@ fn refresh_feeds(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) ->
         if feed.id == "feed/unknown" {
             continue;
         }
+        let icon_url = feed.icon_url.clone();
+        let icon = icon_url.as_deref().and_then(|url| cached_image(store, url));
+        if icon.is_none() {
+            if let Some(url) = icon_url.as_deref() {
+                spawn_icon_fetch(ui, store, state, url);
+            }
+        }
         rows.push(FeedRow {
             id: feed.id.clone().into(),
             title: feed.title.into(),
             folder: feed.folder_name.unwrap_or_default().into(),
             unread: feed.unread_count as i32,
+            icon: icon.unwrap_or_default(),
         });
         streams.push(Stream::Feed(feed.id));
     }
@@ -475,6 +491,30 @@ fn refresh_feeds(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) ->
     state.lock().unwrap().streams = streams;
     ui.set_feeds(ModelRc::new(VecModel::from(rows)));
     Ok(())
+}
+
+fn cached_image(store: &Store, url: &str) -> Option<slint::Image> {
+    let data = store.cached_media(url).ok().flatten()?;
+    slint::Image::load_from_data(&data, None).ok()
+}
+
+fn spawn_icon_fetch(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>, url: &str) {
+    let url = url.to_string();
+    if !state.lock().unwrap().pending_icons.insert(url.clone()) {
+        return;
+    }
+    let ui_weak = ui.as_weak();
+    let store = store.clone();
+    let state = state.clone();
+    let handle = state.lock().unwrap().handle.clone();
+    handle.spawn(async move {
+        let _ = fetch_image(&store, &url).await;
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let _ = refresh_feeds(&ui, &store, &state);
+            }
+        });
+    });
 }
 
 fn load_stream(
@@ -574,11 +614,23 @@ fn select_article(
         );
     } else {
         let blocks = html_to_blocks(html, item.href.as_deref());
-        let rows: Vec<ReaderBlock> = blocks.into_iter().map(to_reader_block).collect();
+        let mut image_urls = Vec::new();
+        let rows: Vec<ReaderBlock> = blocks
+            .into_iter()
+            .map(|block| {
+                if let Some(url) = block.url.as_deref() {
+                    if cached_image(store, url).is_none() {
+                        image_urls.push(url.to_string());
+                    }
+                }
+                to_reader_block(store, block)
+            })
+            .collect();
         if rows.is_empty() {
             set_reader_message(ui, "No readable content in this article.");
         } else {
             ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
+            spawn_reader_images(ui, store, state, image_urls);
         }
     }
 
@@ -638,7 +690,7 @@ fn select_article(
     Ok(())
 }
 
-fn to_reader_block(block: Block) -> ReaderBlock {
+fn to_reader_block(store: &Store, block: Block) -> ReaderBlock {
     let kind = match block.kind {
         BlockKind::Heading(level) => format!("h{level}"),
         BlockKind::Paragraph => "p".into(),
@@ -654,6 +706,10 @@ fn to_reader_block(block: Block) -> ReaderBlock {
         StyledText::from_markdown(&block.text)
             .unwrap_or_else(|_| StyledText::from_plain_text(&block.text))
     };
+    let source = block.url.unwrap_or_default();
+    let image = (!source.is_empty())
+        .then(|| cached_image(store, &source))
+        .flatten();
     ReaderBlock {
         kind: kind.into(),
         label: block.label.into(),
@@ -662,6 +718,48 @@ fn to_reader_block(block: Block) -> ReaderBlock {
             BlockKind::ListItem { depth } => depth as i32,
             _ => 0,
         },
+        source: source.into(),
+        has_image: image.is_some(),
+        image: image.unwrap_or_default(),
+    }
+}
+
+fn spawn_reader_images(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    urls: Vec<String>,
+) {
+    for url in urls {
+        if !state.lock().unwrap().pending_media.insert(url.clone()) {
+            continue;
+        }
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        let handle = state.lock().unwrap().handle.clone();
+        handle.spawn(async move {
+            let result = fetch_image(&store, &url).await;
+            let _ = slint::invoke_from_event_loop(move || {
+                state.lock().unwrap().pending_media.remove(&url);
+                let Some(ui) = ui_weak.upgrade() else { return };
+                let Ok(data) = result else { return };
+                let Ok(image) = slint::Image::load_from_data(&data, None) else {
+                    return;
+                };
+                let model = ui.get_reader_blocks();
+                for index in 0..model.row_count() {
+                    let Some(mut row) = model.row_data(index) else {
+                        continue;
+                    };
+                    if row.source.as_str() == url.as_str() {
+                        row.image = image.clone();
+                        row.has_image = true;
+                        model.set_row_data(index, row);
+                    }
+                }
+            });
+        });
     }
 }
 
@@ -671,6 +769,9 @@ fn set_reader_message(ui: &MainWindow, message: &str) {
         label: "".into(),
         text: StyledText::from_plain_text(message),
         indent: 0,
+        source: "".into(),
+        image: slint::Image::default(),
+        has_image: false,
     };
     ui.set_reader_blocks(ModelRc::new(VecModel::from(vec![block])));
 }

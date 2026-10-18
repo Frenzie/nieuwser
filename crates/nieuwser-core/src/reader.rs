@@ -20,6 +20,7 @@ pub struct Block {
     pub kind: BlockKind,
     pub label: String,
     pub text: String,
+    pub url: Option<String>,
 }
 
 /// Converts article HTML into blocks for native rendering.
@@ -81,6 +82,7 @@ fn collect_element(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>)
                 kind: BlockKind::Heading(level),
                 label: String::new(),
                 text: text.trim().to_string(),
+                url: None,
             });
         }
         return;
@@ -88,24 +90,28 @@ fn collect_element(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>)
 
     match name {
         "p" | "figcaption" | "dt" | "dd" => {
+            collect_inline_images(el, base, blocks);
             let text = inline_children(el, base);
             if !text.trim().is_empty() {
                 blocks.push(Block {
                     kind: BlockKind::Paragraph,
                     label: String::new(),
                     text: text.trim().to_string(),
+                    url: None,
                 });
             }
         }
         "ul" => collect_list(el, false, 0, base, blocks),
         "ol" => collect_list(el, true, 0, base, blocks),
         "blockquote" => {
+            collect_inline_images(el, base, blocks);
             let text = inline_children(el, base);
             if !text.trim().is_empty() {
                 blocks.push(Block {
                     kind: BlockKind::Quote,
                     label: String::new(),
                     text: text.trim().to_string(),
+                    url: None,
                 });
             }
         }
@@ -117,6 +123,7 @@ fn collect_element(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>)
                     kind: BlockKind::Code,
                     label: String::new(),
                     text: text.to_string(),
+                    url: None,
                 });
             }
         }
@@ -124,6 +131,7 @@ fn collect_element(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>)
             kind: BlockKind::Rule,
             label: String::new(),
             text: String::new(),
+            url: None,
         }),
         "img" => {
             if let Some(block) = image_block(el, base) {
@@ -160,6 +168,7 @@ fn collect_list(
                     "•".into()
                 },
                 text: text.trim().to_string(),
+                url: None,
             });
         }
         for nested in item.children() {
@@ -171,6 +180,17 @@ fn collect_list(
                 "ol" => collect_list(&nested, true, depth + 1, base, blocks),
                 _ => {}
             }
+        }
+    }
+}
+
+fn collect_inline_images(el: &ElementRef, base: Option<&Url>, blocks: &mut Vec<Block>) {
+    for image in el
+        .descendent_elements()
+        .filter(|element| element.value().name() == "img")
+    {
+        if let Some(block) = image_block(&image, base) {
+            blocks.push(block);
         }
     }
 }
@@ -191,6 +211,7 @@ fn image_block(el: &ElementRef, base: Option<&Url>) -> Option<Block> {
             alt.to_string()
         },
         text: format!("[Open image](<{}>)", escape_url(&src)),
+        url: Some(src),
     })
 }
 
@@ -238,6 +259,13 @@ fn inline_element(el: &ElementRef, base: Option<&Url>) -> String {
         }
         "code" => inline_code(el),
         "a" => {
+            if inner.trim().is_empty()
+                && el
+                    .descendent_elements()
+                    .any(|element| element.value().name() == "img")
+            {
+                return String::new();
+            }
             let label = if inner.trim().is_empty() {
                 el.value().attr("href").map(escape_text).unwrap_or_default()
             } else {
@@ -308,6 +336,7 @@ fn flush_inline(buffer: &mut String, blocks: &mut Vec<Block>) {
             kind: BlockKind::Paragraph,
             label: String::new(),
             text,
+            url: None,
         });
     }
 }
@@ -454,6 +483,21 @@ fn is_skipped(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn promotes_inline_images_out_of_paragraphs() {
+        let blocks = html_to_blocks(
+            "<p><a href='big.jpg'><img src='pic.jpg' alt=''></a>Text after.</p>",
+            Some("https://example.com/post"),
+        );
+        assert_eq!(blocks[0].kind, BlockKind::Image);
+        assert_eq!(
+            blocks[0].url.as_deref(),
+            Some("https://example.com/pic.jpg")
+        );
+        assert_eq!(blocks[1].kind, BlockKind::Paragraph);
+        assert_eq!(blocks[1].text, "Text after.");
+    }
 
     #[test]
     fn builds_headings_and_inline_markup() {

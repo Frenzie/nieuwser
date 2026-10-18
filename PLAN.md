@@ -3,7 +3,7 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
-Status: M0/M1/M2 complete; M3 in progress (2026-10-18).
+Status: M0/M1/M2/M4 complete; M3 in progress (2026-10-18).
 
 ## Decisions
 
@@ -75,7 +75,8 @@ pulled from the server updates `items` without enqueueing.
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links.
-Images are labeled placeholders until the image cache lands. Keyboard-first: `j`/`↓` next
+Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
+inline images are promoted out of paragraphs. Keyboard-first: `j`/`↓` next
 article, `k`/`↑` previous, `m` toggle read, `s` toggle star, `Esc` close settings.
 Mark-read-on-open is optional in Settings (default on).
 
@@ -85,7 +86,7 @@ Mark-read-on-open is optional in Settings (default on).
 - **M1 — read-only UI:** Slint three-pane shell backed by the store; refresh and article view. *(done)*
 - **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(done)*
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(in progress)*
-- **M4 — content:** reader document IR, image cache, feed icons.
+- **M4 — content:** reader document IR, image cache, feed icons. *(done)*
 - **M5 — hardening:** large accounts, retries, packaging.
 
 ## Current status
@@ -95,26 +96,27 @@ Working today:
 - `nieuwser-core`: greader auth, CSRF token, subscriptions/tags/unread counts, stream
   contents, item IDs/contents, edit-tag, mark-all-as-read, incremental pagination, outbox replay,
   unread/starred reconciliation.
-- SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries.
+- SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries,
+  cached media, and a shared byte budget for bodies and media.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, feed selection, article list, rich block-based reader with clickable
-  links, read/star/mark-all actions, manual refresh that preserves the open article.
-- Tests: 15 core tests covering API parsing/auth, reader blocks, storage/migration,
+  links, cached feed icons and article images, read/star/mark-all actions, manual refresh that
+  preserves the open article.
+- Tests: 17 core tests covering API parsing/auth, reader blocks, storage/migration,
   reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
   read-on-open, keyboard navigation, local search, on-demand article restore after cache
-  eviction, and rich rendering of headings, lists, links, and image placeholders.
+  eviction, rich rendering of headings, lists, links, images, and cached feed icons.
 
 Next up:
 
-1. Image/feed-icon fetching, on-disk caching, and real image rendering.
-2. Themes and layout polish.
-3. Pagination or a larger item limit for big accounts.
-4. Better table and inline-image handling in the reader.
+1. Themes and layout polish.
+2. Pagination or a larger item limit for big accounts.
+3. Better table handling in the reader.
 
 
 ## How to run

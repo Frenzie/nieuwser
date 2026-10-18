@@ -136,6 +136,12 @@ impl Store {
                 key    TEXT PRIMARY KEY,
                 value  TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS media (
+                url         TEXT PRIMARY KEY,
+                data        BLOB NOT NULL,
+                fetched_at  INTEGER NOT NULL
+            );
             "#,
         )?;
         let has_auth_token: i64 = conn.query_row(
@@ -535,10 +541,12 @@ impl Store {
     pub fn cache_bytes(&self) -> Result<u64> {
         let conn = self.conn.lock().unwrap();
         let bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(
-                 LENGTH(CAST(COALESCE(content_html, '') AS BLOB)) +
-                 LENGTH(CAST(COALESCE(summary_html, '') AS BLOB))
-             ), 0) FROM items",
+            "SELECT
+                 (SELECT COALESCE(SUM(
+                     LENGTH(CAST(COALESCE(content_html, '') AS BLOB)) +
+                     LENGTH(CAST(COALESCE(summary_html, '') AS BLOB))
+                 ), 0) FROM items) +
+                 (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM media)",
             [],
             |row| row.get(0),
         )?;
@@ -589,8 +597,51 @@ impl Store {
                 break;
             }
         }
+        while bytes > max_bytes {
+            let media: Vec<(String, i64)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT url, LENGTH(data) FROM media
+                     ORDER BY fetched_at ASC, url ASC LIMIT 100",
+                )?;
+                let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect::<std::result::Result<_, _>>()?
+            };
+            if media.is_empty() {
+                break;
+            }
+            for (url, size) in media {
+                tx.execute("DELETE FROM media WHERE url = ?1", params![url])?;
+                bytes = bytes.saturating_sub(size.max(0) as u64);
+                evicted += 1;
+                if bytes <= max_bytes {
+                    break;
+                }
+            }
+        }
         tx.commit()?;
         Ok(evicted)
+    }
+
+    pub fn cached_media(&self, url: &str) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT data FROM media WHERE url = ?1",
+                params![url],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn put_media(&self, url: &str, data: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO media(url, data, fetched_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(url) DO UPDATE SET data = excluded.data,
+                                           fetched_at = excluded.fetched_at",
+            params![url, data, now()],
+        )?;
+        Ok(())
     }
 
     pub fn set_read(&self, ids: &[String], read: bool) -> Result<()> {
@@ -1044,6 +1095,17 @@ mod tests {
         assert_eq!(search("alice"), vec!["2"]);
         assert_eq!(search("freshrss"), vec!["2"]);
         assert_eq!(search("one"), vec!["1", "2"]);
+    }
+
+    #[test]
+    fn cache_budget_evicts_oldest_media() {
+        let store = Store::open_in_memory().unwrap();
+        store.put_media("a", &[1u8; 1000]).unwrap();
+        store.put_media("b", &[2u8; 1000]).unwrap();
+        assert_eq!(store.cache_bytes().unwrap(), 2000);
+        assert_eq!(store.enforce_cache_budget(1500).unwrap(), 1);
+        assert!(store.cached_media("a").unwrap().is_none());
+        assert!(store.cached_media("b").unwrap().is_some());
     }
 
     #[test]

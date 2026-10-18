@@ -5,6 +5,7 @@ export struct FeedRow {
     title: string,
     folder: string,
     unread: int,
+    icon: image,
 }
 
 export struct ArticleRow {
@@ -21,6 +22,9 @@ export struct ReaderBlock {
     label: string,
     text: styled-text,
     indent: int,
+    source: string,
+    image: image,
+    has-image: bool,
 }
 
 component ReaderText inherits StyledText {
@@ -200,6 +204,14 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 padding: 8px;
                                 spacing: 6px;
+
+                                Image {
+                                    source: feed.icon;
+                                    width: 16px;
+                                    height: 16px;
+                                    image-fit: contain;
+                                    vertical-alignment: center;
+                                }
 
                                 VerticalLayout {
                                     alignment: center;
@@ -407,13 +419,20 @@ export component MainWindow inherits Window {
                                     border-radius: 6px;
                                     VerticalLayout {
                                         padding: 10px;
-                                        spacing: 4px;
+                                        spacing: 6px;
+
+                                        if block.has-image : Image {
+                                            source: block.image;
+                                            height: 320px;
+                                            image-fit: contain;
+                                        }
+
                                         Text {
                                             text: block.label;
                                             font-weight: 600;
                                             wrap: word-wrap;
                                         }
-                                        ReaderText {
+                                        if !block.has-image : ReaderText {
                                             text: block.text;
                                             kind: block.kind;
                                             link-clicked(link) => {
