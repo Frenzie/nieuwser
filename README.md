@@ -68,9 +68,10 @@ Current status and open work are tracked in [PLAN.md](PLAN.md).
 
 ## Releasing
 
-The release workflow runs on a push to the `release` branch, or manually with
-`workflow_dispatch` and an optional version override. It reads the version from
-`[workspace.package] version` in `Cargo.toml` and creates a **draft** GitHub release.
+The release workflow runs when a GitHub release is published, or manually with
+`workflow_dispatch` and an optional version override. A published release uses its tag as
+the version and gets the assets attached directly. A manual run with no existing release
+creates a **draft** GitHub release instead.
 
 Assets produced:
 

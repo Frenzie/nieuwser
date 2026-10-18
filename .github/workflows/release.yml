@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  push:
-    branches: [release]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -25,13 +25,19 @@ jobs:
       prerelease: ${{ steps.resolve.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
       - id: resolve
         name: Resolve version
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           v="$INPUT_VERSION"
+          if [ -z "$v" ] && [ -n "$RELEASE_TAG" ]; then
+            v="$RELEASE_TAG"
+          fi
           v="${v#v}"
           if [ -z "$v" ]; then
             v="$(awk '
@@ -64,6 +70,8 @@ jobs:
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -89,6 +97,8 @@ jobs:
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -111,6 +121,8 @@ jobs:
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -143,7 +155,7 @@ jobs:
           pattern: release-*
           path: artifacts
           merge-multiple: true
-      - name: Checksums and draft release
+      - name: Checksums and release assets
         working-directory: artifacts
         shell: bash
         env:
@@ -151,29 +163,33 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           sha256sum -- * | tee SHA256SUMS.txt
-          tag="v$VERSION"
+          tag="${RELEASE_TAG:-v$VERSION}"
           title="Nieuwser v$VERSION"
           pre=()
+          state="Draft"
           if [ "$PRERELEASE" = "true" ]; then pre=(--prerelease); fi
           if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
-            if [ "$draft" != "true" ]; then
-              echo "::error::Release $tag is already published. Bump the version before pushing to release."
-              exit 1
+            if [ "$draft" = "true" ]; then
+              echo "Updating draft $tag: replacing its assets"
+              gh release view "$tag" --json assets --jq '.assets[].name' | while read -r asset; do
+                gh release delete-asset "$tag" "$asset" --yes
+              done
+              gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
+              gh release upload "$tag" --clobber -- *
+            else
+              state="Published"
+              echo "Uploading assets to published release $tag"
+              gh release upload "$tag" --clobber -- *
             fi
-            echo "Updating draft $tag: replacing its assets"
-            gh release view "$tag" --json assets --jq '.assets[].name' | while read -r asset; do
-              gh release delete-asset "$tag" "$asset" --yes
-            done
-            gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
-            gh release upload "$tag" --clobber -- *
           else
             echo "Creating draft $tag"
             gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --generate-notes "${pre[@]}" -- *
           fi
           {
-            echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"
+            echo "$state release **$title** at \`${GITHUB_SHA::9}\`:"
             echo
             sed 's/^/    /' SHA256SUMS.txt
           } >>"$GITHUB_STEP_SUMMARY"
