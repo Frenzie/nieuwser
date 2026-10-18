@@ -560,7 +560,20 @@ export component MainWindow inherits Window {
     }
     }
 
-    if root.settings-open : Rectangle {
+    if root.settings-open : FocusScope {
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-settings();
+                accept
+            } else {
+                reject
+            }
+        }
+
+        Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
@@ -680,6 +693,7 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
         }
     }
 }
