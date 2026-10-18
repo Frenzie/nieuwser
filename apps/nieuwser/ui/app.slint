@@ -532,6 +532,8 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: article.read ? "" : "●";
+                                    width: 8px;
+                                    horizontal-alignment: center;
                                     color: Theme.accent;
                                     font-size: 8px;
                                     vertical-alignment: center;
@@ -543,6 +545,7 @@ export component MainWindow inherits Window {
                                         text: article.title;
                                         font-size: 13px;
                                         font-weight: article.read ? 400 : 600;
+                                        horizontal-alignment: left;
                                         overflow: elide;
                                     }
                                     HorizontalLayout {
