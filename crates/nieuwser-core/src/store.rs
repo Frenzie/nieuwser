@@ -27,6 +27,20 @@ pub struct FeedRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct ItemSummary {
+    pub id: String,
+    pub feed_id: String,
+    pub feed_title: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub published: i64,
+    pub href: Option<String>,
+    pub read: bool,
+    pub starred: bool,
+    pub timestamp_usec: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct ItemRow {
     pub id: String,
     pub feed_id: String,
@@ -449,7 +463,7 @@ impl Store {
         offset: i64,
         unread_only: bool,
         search: Option<&str>,
-    ) -> Result<Vec<ItemRow>> {
+    ) -> Result<Vec<ItemSummary>> {
         let (filter, mut values) = stream_where(stream);
         let mut clauses = vec![filter];
         if unread_only {
@@ -473,7 +487,6 @@ impl Store {
         let sql = format!(
             "SELECT items.id, items.feed_id, COALESCE(feeds.title, ''),
                     items.title, items.author, items.published, items.href,
-                    COALESCE(items.content_html, ''), COALESCE(items.summary_html, ''),
                     items.read, items.starred, items.timestamp_usec
              FROM items
              LEFT JOIN feeds ON feeds.id = items.feed_id
@@ -485,7 +498,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(values), |row| {
-            Ok(ItemRow {
+            Ok(ItemSummary {
                 id: row.get(0)?,
                 feed_id: row.get(1)?,
                 feed_title: row.get(2)?,
@@ -493,11 +506,9 @@ impl Store {
                 author: row.get(4)?,
                 published: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
                 href: row.get(6)?,
-                content_html: row.get(7)?,
-                summary_html: row.get(8)?,
-                read: row.get::<_, i64>(9)? != 0,
-                starred: row.get::<_, i64>(10)? != 0,
-                timestamp_usec: row.get(11)?,
+                read: row.get::<_, i64>(7)? != 0,
+                starred: row.get::<_, i64>(8)? != 0,
+                timestamp_usec: row.get(9)?,
             })
         })?;
         let mut items = Vec::new();

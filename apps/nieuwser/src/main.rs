@@ -9,13 +9,13 @@ use anyhow::Result;
 use nieuwser_core::media::fetch_image;
 use nieuwser_core::models::Stream;
 use nieuwser_core::reader::{Block, BlockKind, html_to_blocks};
-use nieuwser_core::store::ItemRow;
+use nieuwser_core::store::ItemSummary;
 use nieuwser_core::{Client, Store, SyncEngine};
 use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
 
 struct UiState {
     streams: Vec<Stream>,
-    items: Vec<ItemRow>,
+    items: Vec<ItemSummary>,
     selected: HashSet<String>,
     anchor: Option<String>,
     handle: tokio::runtime::Handle,
@@ -616,7 +616,7 @@ fn load_stream(
     Ok(())
 }
 
-fn article_rows(items: &[ItemRow], selected: &HashSet<String>) -> Vec<ArticleRow> {
+fn article_rows(items: &[ItemSummary], selected: &HashSet<String>) -> Vec<ArticleRow> {
     items
         .iter()
         .map(|item| ArticleRow {
@@ -715,10 +715,13 @@ fn select_article(
     mark_read: bool,
     allow_fetch: bool,
 ) -> Result<()> {
-    let Some(item) = selected_item(state, index) else {
+    let Some(summary) = selected_item(state, index) else {
         return Ok(());
     };
-    let id = item.id.clone();
+    let id = summary.id.clone();
+    let Some(item) = store.item(&id)? else {
+        return Ok(());
+    };
     let html = if !item.content_html.trim().is_empty() {
         &item.content_html
     } else {
@@ -1132,7 +1135,7 @@ fn set_clipboard_text(text: String) -> Result<(), arboard::Error> {
     slot.as_mut().unwrap().set_text(text)
 }
 
-fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemRow> {
+fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemSummary> {
     if index < 0 {
         return None;
     }
