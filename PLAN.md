@@ -8,7 +8,8 @@ Status: M0/M1/M2 complete; M3 in progress (2026-10-18).
 ## Decisions
 
 - **UI:** Slint. The UI must stay replaceable, so all business logic lives in `nieuwser-core`.
-- **Article view:** sanitized native rich-text reader view, no embedded webview in v1.
+- **Article view:** block-level document IR (headings, paragraphs, lists, quotes, code, rules,
+  images) rendered with native Slint widgets; inline links open externally. No embedded webview.
 - **Sync:** FreshRSS Google Reader API (`/api/greader.php`), not Fever.
 - **Storage:** SQLite via `rusqlite`; metadata kept indefinitely, ~500 MB default budget for
   article bodies and media. Never evict unread/starred bodies. Oldest read/unstarred bodies are
@@ -73,8 +74,10 @@ pulled from the server updates `items` without enqueueing.
 ## UI
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
-Keyboard-first: `j`/`↓` next article, `k`/`↑` previous, `m` toggle read, `s` toggle star,
-`Esc` close settings. Mark-read-on-open is optional in Settings (default on).
+Reader blocks use native `StyledText` with inline emphasis, code, and clickable links.
+Images are labeled placeholders until the image cache lands. Keyboard-first: `j`/`↓` next
+article, `k`/`↑` previous, `m` toggle read, `s` toggle star, `Esc` close settings.
+Mark-read-on-open is optional in Settings (default on).
 
 ## Milestones
 
@@ -96,22 +99,22 @@ Working today:
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
-  navigation, local search, feed selection, article list, plain-text reader view,
-  read/star/mark-all actions, manual refresh that preserves the open article.
-- Tests: 12 core tests covering API parsing/auth, storage/migration, reconciliation, search,
-  cache eviction, and a mocked end-to-end sync.
+  navigation, local search, feed selection, article list, rich block-based reader with clickable
+  links, read/star/mark-all actions, manual refresh that preserves the open article.
+- Tests: 15 core tests covering API parsing/auth, reader blocks, storage/migration,
+  reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
-  read-on-open, keyboard navigation, local search, and on-demand article restore after cache
-  eviction.
+  read-on-open, keyboard navigation, local search, on-demand article restore after cache
+  eviction, and rich rendering of headings, lists, links, and image placeholders.
 
 Next up:
 
-1. Image/feed-icon caching (on-disk HTTP cache).
-2. Structured reader document IR (headings, links, lists, images) instead of plain text.
-3. Themes and layout polish.
-4. Pagination or a larger item limit for big accounts.
+1. Image/feed-icon fetching, on-disk caching, and real image rendering.
+2. Themes and layout polish.
+3. Pagination or a larger item limit for big accounts.
+4. Better table and inline-image handling in the reader.
 
 
 ## How to run

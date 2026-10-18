@@ -6,10 +6,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use nieuwser_core::models::Stream;
-use nieuwser_core::reader::html_to_text;
+use nieuwser_core::reader::{Block, BlockKind, html_to_blocks};
 use nieuwser_core::store::ItemRow;
 use nieuwser_core::{Client, Store, SyncEngine};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, StyledText, VecModel};
 
 struct UiState {
     streams: Vec<Stream>,
@@ -211,6 +211,17 @@ fn bind_callbacks(
         ui.on_prev_article(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 move_article(&ui, &store, &state, -1);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_open_link(move |link| {
+            if let Err(error) = open_external(link.as_str()) {
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_status(format!("Could not open link: {error}").into());
+                }
             }
         });
     }
@@ -499,7 +510,7 @@ fn load_stream(
     ui.set_article_index(-1);
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
-    ui.set_reader_body("".into());
+    ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
     Ok(())
 }
 
@@ -544,11 +555,6 @@ fn select_article(
         &item.summary_html
     };
     let needs_fetch = html.trim().is_empty();
-    let body = if needs_fetch {
-        "No cached content. Loading…".to_string()
-    } else {
-        html_to_text(html)
-    };
 
     ui.set_reader_title(display_title(&item.title).into());
     let mut meta = item.feed_title;
@@ -557,7 +563,24 @@ fn select_article(
         meta.push_str(&author);
     }
     ui.set_reader_meta(meta.into());
-    ui.set_reader_body(body.into());
+    if needs_fetch {
+        set_reader_message(
+            ui,
+            if allow_fetch {
+                "No cached content. Loading…"
+            } else {
+                "No cached content."
+            },
+        );
+    } else {
+        let blocks = html_to_blocks(html, item.href.as_deref());
+        let rows: Vec<ReaderBlock> = blocks.into_iter().map(to_reader_block).collect();
+        if rows.is_empty() {
+            set_reader_message(ui, "No readable content in this article.");
+        } else {
+            ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
+        }
+    }
 
     if mark_read && ui.get_mark_read_on_open() && !item.read {
         store.set_read(&[id.clone()], true)?;
@@ -595,23 +618,89 @@ fn select_article(
                             if loaded {
                                 let _ = select_article(&ui, &store, &state, index, false, false);
                             } else {
-                                ui.set_reader_body("No content available from the server.".into());
+                                set_reader_message(&ui, "No content available from the server.");
                             }
                         }
-                        Ok(_) => ui.set_reader_body("No content available from the server.".into()),
+                        Ok(_) => set_reader_message(&ui, "No content available from the server."),
                         Err(error) => {
-                            ui.set_reader_body(format!("Could not load article: {error}").into())
+                            set_reader_message(&ui, &format!("Could not load article: {error}"))
                         }
                     }
                 });
             });
         } else {
-            ui.set_reader_body(
-                "No cached content. Connect an account to fetch this article.".into(),
+            set_reader_message(
+                ui,
+                "No cached content. Connect an account to fetch this article.",
             );
         }
     }
     Ok(())
+}
+
+fn to_reader_block(block: Block) -> ReaderBlock {
+    let kind = match block.kind {
+        BlockKind::Heading(level) => format!("h{level}"),
+        BlockKind::Paragraph => "p".into(),
+        BlockKind::ListItem { .. } => "li".into(),
+        BlockKind::Quote => "quote".into(),
+        BlockKind::Code => "code".into(),
+        BlockKind::Rule => "rule".into(),
+        BlockKind::Image => "image".into(),
+    };
+    let text = if block.kind == BlockKind::Code {
+        StyledText::from_plain_text(&block.text)
+    } else {
+        StyledText::from_markdown(&block.text)
+            .unwrap_or_else(|_| StyledText::from_plain_text(&block.text))
+    };
+    ReaderBlock {
+        kind: kind.into(),
+        label: block.label.into(),
+        text,
+        indent: match block.kind {
+            BlockKind::ListItem { depth } => depth as i32,
+            _ => 0,
+        },
+    }
+}
+
+fn set_reader_message(ui: &MainWindow, message: &str) {
+    let block = ReaderBlock {
+        kind: "p".into(),
+        label: "".into(),
+        text: StyledText::from_plain_text(message),
+        indent: 0,
+    };
+    ui.set_reader_blocks(ModelRc::new(VecModel::from(vec![block])));
+}
+
+fn open_external(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command.spawn().map(|_| ())
 }
 
 fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>, delta: i32) {

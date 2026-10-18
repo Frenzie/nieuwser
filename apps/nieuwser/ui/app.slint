@@ -16,6 +16,29 @@ export struct ArticleRow {
     starred: bool,
 }
 
+export struct ReaderBlock {
+    kind: string,
+    label: string,
+    text: styled-text,
+    indent: int,
+}
+
+component ReaderText inherits StyledText {
+    in property <string> kind;
+    default-font-size: kind == "h1" ? 26px
+        : kind == "h2" ? 21px
+        : kind == "h3" ? 18px
+        : kind == "h4" || kind == "h5" || kind == "h6" ? 16px
+        : kind == "code" ? 13px
+        : kind == "image" ? 12px
+        : 15px;
+    default-color: kind == "quote" ? #55554f
+        : kind == "image" ? #6b6b66
+        : #242422;
+    default-font-family: kind == "code" ? "monospace" : "";
+    horizontal-stretch: 1;
+}
+
 export component MainWindow inherits Window {
     title: "Nieuwser";
     preferred-width: 1280px;
@@ -28,7 +51,7 @@ export component MainWindow inherits Window {
     in-out property <int> article-index: -1;
     in property <string> reader-title;
     in property <string> reader-meta;
-    in property <string> reader-body;
+    in property <[ReaderBlock]> reader-blocks;
     in property <string> status;
     in property <string> last-synced;
     in property <bool> syncing: false;
@@ -54,6 +77,7 @@ export component MainWindow inherits Window {
     callback select-feed(int);
     callback select-article(int);
     callback search(string);
+    callback open-link(string);
     callback toggle-read();
     callback toggle-star();
     callback mark-all-read();
@@ -350,7 +374,7 @@ export component MainWindow inherits Window {
 
                     ScrollView {
                         VerticalLayout {
-                            spacing: 10px;
+                            spacing: 12px;
 
                             Text {
                                 text: root.reader-title;
@@ -370,10 +394,72 @@ export component MainWindow inherits Window {
                                 background: #ecece8;
                             }
 
-                            Text {
-                                text: root.reader-body;
-                                wrap: word-wrap;
-                                font-size: 15px;
+                            for block in root.reader-blocks : VerticalLayout {
+                                spacing: 4px;
+
+                                if block.kind == "rule" : Rectangle {
+                                    height: 1px;
+                                    background: #ecece8;
+                                }
+
+                                if block.kind == "image" : Rectangle {
+                                    background: #f4f4f1;
+                                    border-radius: 6px;
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        spacing: 4px;
+                                        Text {
+                                            text: block.label;
+                                            font-weight: 600;
+                                            wrap: word-wrap;
+                                        }
+                                        ReaderText {
+                                            text: block.text;
+                                            kind: block.kind;
+                                            link-clicked(link) => {
+                                                root.open-link(link);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if block.kind == "code" : Rectangle {
+                                    background: #f4f4f1;
+                                    border-radius: 6px;
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        ReaderText {
+                                            text: block.text;
+                                            kind: block.kind;
+                                        }
+                                    }
+                                }
+
+                                if block.kind != "rule" && block.kind != "image" && block.kind != "code" : HorizontalLayout {
+                                    padding-left: block.indent * 18px;
+                                    spacing: 8px;
+
+                                    if block.kind == "quote" : Rectangle {
+                                        width: 3px;
+                                        background: #d8d8d2;
+                                    }
+
+                                    if block.label != "" : Text {
+                                        text: block.label;
+                                        width: 30px;
+                                        color: #77776f;
+                                        font-size: 14px;
+                                        vertical-alignment: top;
+                                    }
+
+                                    ReaderText {
+                                        text: block.text;
+                                        kind: block.kind;
+                                        link-clicked(link) => {
+                                            root.open-link(link);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
