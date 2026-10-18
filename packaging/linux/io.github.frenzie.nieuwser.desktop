@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nieuwser
+GenericName=Feed Reader
+Comment=Offline-first desktop client for FreshRSS
+Exec=nieuwser
+Icon=io.github.frenzie.nieuwser
+Terminal=false
+Categories=Network;News;
+Keywords=RSS;Feed;FreshRSS;Reader;
+StartupNotify=true
+StartupWMClass=nieuwser

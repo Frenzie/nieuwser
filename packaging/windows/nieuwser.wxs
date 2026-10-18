@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nieuwser MSI (WiX Toolset v5). Built by package.ps1:
+    wix build nieuwser.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
+
+  Per-machine install with a Start Menu shortcut. No signing identity is used; Windows will
+  show an unknown-publisher warning.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Nieuwser"
+      Manufacturer="Frenzie"
+      Version="$(var.Version)"
+      UpgradeCode="B1F0C4A5-4396-4932-BF84-CCC03BA39740"
+      Scope="perMachine"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="Nieuwser feed reader" Manufacturer="Frenzie" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Nieuwser is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="NieuwserIcon.exe" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="NieuwserIcon.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Frenzie/nieuwser" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Nieuwser" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Feature Id="Main" Title="Nieuwser" Level="1">
+      <ComponentGroupRef Id="NieuwserFiles" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="NieuwserFiles" Directory="INSTALLFOLDER">
+      <Component Id="NieuwserApp" Guid="6CD885AF-3917-421A-BBD1-EE93F5ABC688">
+        <File Id="NieuwserExe" Source="$(var.BinDir)\nieuwser.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="Nieuwser"
+              Description="Offline-first desktop client for FreshRSS"
+              WorkingDirectory="INSTALLFOLDER" Advertise="yes"
+              Icon="NieuwserIcon.exe" IconIndex="0" />
+        </File>
+        <File Id="NieuwserCliExe" Source="$(var.BinDir)\nieuwser-cli.exe" />
+        <RegistryValue Root="HKLM" Key="Software\Frenzie\Nieuwser" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

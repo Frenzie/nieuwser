@@ -15,3 +15,4 @@ tokio.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
+winresource = "0.1"

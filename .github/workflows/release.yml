@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g. 0.2.0 or 0.2.0-rc.1)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: resolve
+        name: Resolve version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="$INPUT_VERSION"
+          v="${v#v}"
+          if [ -z "$v" ]; then
+            v="$(awk '
+              /^\[/ { in_pkg = ($0 == "[workspace.package]") ; next }
+              in_pkg && $1 == "version" { gsub(/[" ]/, "", $3); print $3; exit }
+            ' Cargo.toml)"
+          fi
+          if ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::'$v' is not a version like 1.2.3 or 1.2.3-rc.1"
+            exit 1
+          fi
+          case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >>"$GITHUB_OUTPUT"
+          echo "### Nieuwser v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libfreetype-dev pkg-config dpkg-dev desktop-file-utils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ matrix.arch }}
+      - name: Package
+        run: packaging/linux/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-universal
+      - name: Package
+        run: packaging/macos/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos-universal
+          path: dist/release/*
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Package
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-x64
+          path: dist/release/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, linux, macos, windows]
+    if: "!cancelled() && !contains(needs.*.result, 'failure')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums and draft release
+        working-directory: artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          sha256sum -- * | tee SHA256SUMS.txt
+          tag="v$VERSION"
+          title="Nieuwser v$VERSION"
+          pre=()
+          if [ "$PRERELEASE" = "true" ]; then pre=(--prerelease); fi
+          if draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$draft" != "true" ]; then
+              echo "::error::Release $tag is already published. Bump the version before pushing to release."
+              exit 1
+            fi
+            echo "Updating draft $tag: replacing its assets"
+            gh release view "$tag" --json assets --jq '.assets[].name' | while read -r asset; do
+              gh release delete-asset "$tag" "$asset" --yes
+            done
+            gh release edit "$tag" --draft --title "$title" --target "$GITHUB_SHA" --prerelease="$PRERELEASE"
+            gh release upload "$tag" --clobber -- *
+          else
+            echo "Creating draft $tag"
+            gh release create "$tag" --draft --title "$title" --target "$GITHUB_SHA" --generate-notes "${pre[@]}" -- *
+          fi
+          {
+            echo "Draft release **$title** at \`${GITHUB_SHA::9}\`:"
+            echo
+            sed 's/^/    /' SHA256SUMS.txt
+          } >>"$GITHUB_STEP_SUMMARY"

@@ -66,6 +66,23 @@ cargo fmt --all --check
 
 Current status and open work are tracked in [PLAN.md](PLAN.md).
 
+## Releasing
+
+The release workflow runs on a push to the `release` branch, or manually with
+`workflow_dispatch` and an optional version override. It reads the version from
+`[workspace.package] version` in `Cargo.toml` and creates a **draft** GitHub release.
+
+Assets produced:
+
+- Linux x86_64/aarch64: `.AppImage`, `.deb`, `.tar.gz`
+- macOS universal: `.dmg` and a CLI `.zip`
+- Windows x64: `.msi` and a portable `.zip`
+- `SHA256SUMS.txt`
+
+Builds are unsigned: the macOS app is ad-hoc signed only, and the Windows packages have no
+code-signing certificate, so Gatekeeper/SmartScreen will warn. Review the draft release and
+publish it manually. Local packaging scripts live in `packaging/`.
+
 ## License
 
 GPL-3.0-or-later (see `Cargo.toml`).

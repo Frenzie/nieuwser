@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.frenzie.nieuwser</id>
+  <name>Nieuwser</name>
+  <summary>Offline-first desktop client for FreshRSS</summary>
+  <description>
+    <p>
+      Nieuwser is a native, offline-first reader for FreshRSS. It keeps a local SQLite
+      cache of feeds and articles, supports local search, and queues read and starred
+      changes until the next sync.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.frenzie.nieuwser.desktop</launchable>
+  <url type="homepage">https://github.com/Frenzie/nieuwser</url>
+  <developer id="io.github.frenzie">
+    <name>Frenzie</name>
+  </developer>
+  <provides>
+    <binary>nieuwser</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+    <category>News</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+</component>

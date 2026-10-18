@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient (Blue to Sunset Warmth matching the concept) -->
+    <linearGradient id="sky-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1472cb" />
+      <stop offset="55%" stop-color="#2a93f4" />
+      <stop offset="80%" stop-color="#e98d36" />
+      <stop offset="100%" stop-color="#f5c242" />
+    </linearGradient>
+
+    <!-- Newspaper Print Texture Pattern -->
+    <pattern id="newspaper-print" width="32" height="32" patternUnits="userSpaceOnUse" patternTransform="rotate(15)">
+      <rect width="32" height="32" fill="#f8f9fa" />
+      <!-- Headline bar -->
+      <rect x="2" y="3" width="20" height="3" fill="#2d3748" />
+      <!-- Text columns -->
+      <line x1="2" y1="9" x2="20" y2="9" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,1" />
+      <line x1="2" y1="13" x2="20" y2="13" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="3,1" />
+      <line x1="2" y1="17" x2="14" y2="17" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,2" />
+      <!-- Halftone photo box simulation -->
+      <rect x="21" y="9" width="9" height="11" fill="#cbd5e0" />
+      <circle cx="23.5" cy="11.5" r="0.7" fill="#2d3748" />
+      <circle cx="26.5" cy="11.5" r="0.7" fill="#2d3748" />
+      <circle cx="23.5" cy="14.5" r="0.7" fill="#2d3748" />
+      <circle cx="29.5" cy="11.5" r="0.7" fill="#2d3748" />
+      <!-- More text lines -->
+      <line x1="2" y1="22" x2="30" y2="22" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="4,1" />
+      <line x1="2" y1="26" x2="26" y2="26" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,2" />
+    </pattern>
+
+    <!-- Halftone Dot Pattern for Shadow Facets -->
+    <pattern id="halftone" width="8" height="8" patternUnits="userSpaceOnUse">
+      <circle cx="4" cy="4" r="1.5" fill="#1a202c" opacity="0.15" />
+    </pattern>
+
+    <!-- Soft Drop Shadow for the Bird -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- App Icon Base Squircle -->
+  <rect width="512" height="512" rx="112" ry="112" fill="url(#sky-gradient)" />
+
+  <!-- Origami Bird Container -->
+  <g filter="url(#shadow)" transform="translate(15, 5)">
+
+    <!-- UPPER WING / BACK TIP -->
+    <polygon points="340,75 385,105 315,210" fill="#e2e8f0" />
+    <polygon points="340,75 385,105 315,210" fill="url(#halftone)" />
+
+    <!-- MAIN NEWSPAPER WING (Right Wing) -->
+    <polygon points="210,140 375,225 240,295" fill="url(#newspaper-print)" />
+    <!-- Wing Crease Gradient Overlay for 3D fold effect -->
+    <polygon points="210,140 375,225 240,295" fill="linear-gradient" opacity="0.1" />
+
+    <!-- UPPER BODY SPINE -->
+    <polygon points="210,140 340,75 315,210" fill="#ffffff" />
+
+    <!-- HEAD & BEAK -->
+    <!-- Lower Head Facet -->
+    <polygon points="130,225 190,205 210,295" fill="#edf2f7" />
+    <!-- Upper Head Facet (Bright) -->
+    <polygon points="130,225 180,180 190,205" fill="#ffffff" />
+    <!-- Beak tip shadow fold -->
+    <polygon points="130,225 160,215 190,205" fill="#cbd5e0" opacity="0.5" />
+
+    <!-- CENTRAL BODY CORE FOLD -->
+    <polygon points="210,140 240,295 190,205" fill="#cbd5e0" />
+
+    <!-- LOWER BELLY / TAIL SECTION -->
+    <polygon points="240,295 345,430 280,310" fill="url(#newspaper-print)" />
+    <!-- Tail Halftone shading for depth -->
+    <polygon points="240,295 345,430 280,310" fill="url(#halftone)" />
+
+    <!-- RIGHT TAIL FEATHER FIN -->
+    <polygon points="345,430 370,270 280,310" fill="#cbd5e0" />
+    <polygon points="345,430 370,270 280,310" fill="url(#halftone)" />
+
+    <!-- SHARP CREASE HIGHLIGHT LINES (Origami folds) -->
+    <polyline points="210,140 240,295 375,225" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.8" />
+    <polyline points="190,205 240,295" fill="none" stroke="#a0aec0" stroke-width="1.5" />
+    <polyline points="240,295 280,310" fill="none" stroke="#a0aec0" stroke-width="1.5" />
+    <polyline points="315,210 240,295" fill="none" stroke="#cbd5e0" stroke-width="1.5" />
+  </g>
+</svg>
