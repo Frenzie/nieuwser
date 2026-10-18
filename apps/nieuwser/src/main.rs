@@ -2,7 +2,7 @@ slint::include_modules!();
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -1113,12 +1113,23 @@ fn copy_selected_links(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
         ui.set_status("No link for the selected article(s).".into());
         return;
     }
-    let result =
-        arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(links.join("\n")));
+    let result = set_clipboard_text(links.join("\n"));
     match result {
         Ok(()) => ui.set_status(format!("Copied {} link(s).", links.len()).into()),
         Err(error) => ui.set_status(format!("Could not copy link: {error}").into()),
     }
+}
+
+// Keep the clipboard alive so X11 keeps serving after this call.
+static CLIPBOARD: OnceLock<Mutex<Option<arboard::Clipboard>>> = OnceLock::new();
+
+fn set_clipboard_text(text: String) -> Result<(), arboard::Error> {
+    let slot = CLIPBOARD.get_or_init(|| Mutex::new(None));
+    let mut slot = slot.lock().unwrap();
+    if slot.is_none() {
+        *slot = Some(arboard::Clipboard::new()?);
+    }
+    slot.as_mut().unwrap().set_text(text)
 }
 
 fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemRow> {
