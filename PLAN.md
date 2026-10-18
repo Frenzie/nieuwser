@@ -74,7 +74,8 @@ pulled from the server updates `items` without enqueueing.
 ## UI
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
-The article list loads 300 items at a time with a "Load more" button.
+The article list loads 300 items at a time with a "Load more" button; empty states and a
+minimum window size keep the layout usable.
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links.
 Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
 inline images are promoted out of paragraphs. Keyboard-first: `j`/`↓` next

@@ -69,6 +69,8 @@ export component MainWindow inherits Window {
     title: "Nieuwser";
     preferred-width: 1280px;
     preferred-height: 820px;
+    min-width: 1000px;
+    min-height: 600px;
     background: Theme.bg;
 
     in property <[FeedRow]> feeds;
@@ -320,6 +322,13 @@ export component MainWindow inherits Window {
                         }
                     }
 
+                    if root.articles.length == 0 : Text {
+                        text: "No articles match this view.";
+                        color: Theme.text-faint;
+                        horizontal-alignment: center;
+                        font-size: 12px;
+                    }
+
                     ListView {
                         content-y <=> root.article-content-y;
                         for article[i] in root.articles : Rectangle {                            height: 64px;
@@ -397,7 +406,10 @@ export component MainWindow inherits Window {
                 background: Theme.surface;
 
                 VerticalLayout {
-                    padding: 24px;
+                    padding-top: 24px;
+                    padding-bottom: 24px;
+                    padding-left: 24px;
+                    padding-right: 24px;
                     spacing: 10px;
 
                     HorizontalLayout {
@@ -438,6 +450,13 @@ export component MainWindow inherits Window {
                                 text: root.reader-meta;
                                 color: Theme.text-muted;
                                 font-size: 12px;
+                                wrap: word-wrap;
+                            }
+
+                            if root.reader-title == "" : Text {
+                                text: "Select an article to read.";
+                                color: Theme.text-faint;
+                                font-size: 13px;
                             }
 
                             Rectangle {
