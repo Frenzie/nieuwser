@@ -1,7 +1,9 @@
 slint::include_modules!();
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +26,7 @@ struct UiState {
 }
 
 const ARTICLE_PAGE: i64 = 300;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 fn main() -> Result<()> {
     let db_path = db_path();
@@ -259,13 +262,24 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
+        let generation = Rc::new(Cell::new(0u64));
         ui.on_search(move |_query| {
-            if let Some(ui) = ui_weak.upgrade() {
+            let current = generation.get() + 1;
+            generation.set(current);
+            let generation = generation.clone();
+            let ui_weak = ui_weak.clone();
+            let store = store.clone();
+            let state = state.clone();
+            slint::Timer::single_shot(SEARCH_DEBOUNCE, move || {
+                if generation.get() != current {
+                    return;
+                }
+                let Some(ui) = ui_weak.upgrade() else { return };
                 ui.set_article_content_y(0.0);
                 if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
                     ui.set_status(format!("Search failed: {error}").into());
                 }
-            }
+            });
         });
     }
 
