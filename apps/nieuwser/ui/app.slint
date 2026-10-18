@@ -146,6 +146,7 @@ component SelectionContext inherits ContextMenuArea {
 
 export component MainWindow inherits Window {
     title: "Nieuwser";
+    icon: @image-url("icons/nieuwser.svg");
     preferred-width: 1280px;
     preferred-height: 820px;
     min-width: 1000px;
@@ -257,12 +258,16 @@ export component MainWindow inherits Window {
             } else if (event.text == Key.End) {
                 root.scroll-reader(0px - reader-scroll.content-height);
                 accept
-            } else if (event.text == Key.DownArrow
-                       || (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
+            } else if (event.text == Key.DownArrow) {
+                root.scroll-reader(0px - 64px);
+                accept
+            } else if (event.text == Key.UpArrow) {
+                root.scroll-reader(64px);
+                accept
+            } else if (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.next-article();
                 accept
-            } else if (event.text == Key.UpArrow
-                       || (event.text == "k" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)) {
+            } else if (event.text == "k" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.prev-article();
                 accept
             } else if (event.text == "m" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
@@ -287,6 +292,14 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 padding: 12px;
                 spacing: 12px;
+
+                Image {
+                    source: @image-url("icons/nieuwser.svg");
+                    width: 28px;
+                    height: 28px;
+                    image-fit: contain;
+                    vertical-alignment: center;
+                }
 
                 Text {
                     text: "Nieuwser";
