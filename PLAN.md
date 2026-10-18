@@ -78,7 +78,8 @@ Reader blocks use native `StyledText` with inline emphasis, code, and clickable 
 Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
 inline images are promoted out of paragraphs. Keyboard-first: `j`/`↓` next
 article, `k`/`↑` previous, `m` toggle read, `s` toggle star, `Esc` close settings.
-Mark-read-on-open is optional in Settings (default on).
+Mark-read-on-open is optional in Settings (default on). Light/dark theme is stored locally and
+also switches the standard Slint widget palette.
 
 ## Milestones
 
@@ -102,8 +103,8 @@ Working today:
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, feed selection, article list, rich block-based reader with clickable
-  links, cached feed icons and article images, read/star/mark-all actions, manual refresh that
-  preserves the open article.
+  links, cached feed icons and article images, persisted light/dark theme, read/star/mark-all
+  actions, manual refresh that preserves the open article.
 - Tests: 18 core tests covering API parsing/auth, reader blocks, storage/migration,
   reconciliation, search, cache eviction, and a mocked end-to-end sync.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
@@ -114,8 +115,8 @@ Working today:
 
 Next up:
 
-1. Themes and layout polish.
-2. Pagination or a larger item limit for big accounts.
+1. Pagination or a larger item limit for big accounts.
+2. Layout polish for narrow windows and resizable panes.
 
 
 ## How to run

@@ -50,6 +50,9 @@ fn main() -> Result<()> {
     }
     ui.set_last_synced(last_synced_text(&store).into());
     ui.set_mark_read_on_open(store.state("mark_read_on_open")?.as_deref() != Some("0"));
+    let dark_mode = store.state("dark_mode")?.as_deref() == Some("1");
+    ui.set_dark_mode(dark_mode);
+    ui.global::<Theme>().set_dark(dark_mode);
     let has_token = store.auth_token()?.is_some();
     if !has_token {
         ui.set_settings_open(true);
@@ -193,6 +196,20 @@ fn bind_callbacks(
                 if let Err(error) =
                     store.set_state("mark_read_on_open", if value { "1" } else { "0" })
                 {
+                    ui.set_status(format!("Settings failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.on_set_dark_mode(move |value| {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_dark_mode(value);
+                ui.global::<Theme>().set_dark(value);
+                if let Err(error) = store.set_state("dark_mode", if value { "1" } else { "0" }) {
                     ui.set_status(format!("Settings failed: {error}").into());
                 }
             }

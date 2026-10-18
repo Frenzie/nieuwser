@@ -1,4 +1,4 @@
-import { Button, CheckBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ListView, Palette, ScrollView } from "std-widgets.slint";
 
 export struct FeedRow {
     id: string,
@@ -27,6 +27,27 @@ export struct ReaderBlock {
     has-image: bool,
 }
 
+export global Theme {
+    in property <bool> dark;
+    out property <color> bg: dark ? #171715 : #f7f7f5;
+    out property <color> surface: dark ? #1f1f1c : #ffffff;
+    out property <color> surface-alt: dark ? #242420 : #fbfbf9;
+    out property <color> block: dark ? #242420 : #f4f4f1;
+    out property <color> text: dark ? #e8e8e2 : #242422;
+    out property <color> text-muted: dark ? #a3a39a : #6b6b66;
+    out property <color> text-faint: dark ? #7c7c74 : #999990;
+    out property <color> border: dark ? #34342f : #e2e2de;
+    out property <color> divider: dark ? #2b2b27 : #ecece8;
+    out property <color> feed-selected: dark ? #2b3a4d : #e6edf7;
+    out property <color> article-selected: dark ? #263141 : #eef3fa;
+    out property <color> accent: dark ? #7ea6e0 : #4a6fa5;
+    out property <color> settings-border: dark ? #3a3a34 : #d8d8d2;
+    out property <color> danger: dark ? #e07a6f : #b03a2e;
+    out property <color> warning: dark ? #d9b36a : #8a6d3b;
+    out property <color> overlay: dark ? #00000099 : #00000066;
+    out property <color> star: #c49a23;
+}
+
 component ReaderText inherits StyledText {
     in property <string> kind;
     default-font-size: kind == "h1" ? 26px
@@ -37,9 +58,9 @@ component ReaderText inherits StyledText {
         : kind == "table" ? 12px
         : kind == "image" ? 12px
         : 15px;
-    default-color: kind == "quote" ? #55554f
-        : kind == "image" ? #6b6b66
-        : #242422;
+    default-color: kind == "quote" ? Theme.text-muted
+        : kind == "image" ? Theme.text-muted
+        : Theme.text;
     default-font-family: kind == "code" || kind == "table" ? "monospace" : "";
     horizontal-stretch: 1;
 }
@@ -48,10 +69,18 @@ export component MainWindow inherits Window {
     title: "Nieuwser";
     preferred-width: 1280px;
     preferred-height: 820px;
-    background: #f7f7f5;
+    background: Theme.bg;
 
     in property <[FeedRow]> feeds;
     in property <[ArticleRow]> articles;
+    in-out property <bool> dark-mode: false;
+
+    init => {
+        Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light;
+    }
+    changed dark-mode => {
+        Palette.color-scheme = self.dark-mode ? ColorScheme.dark : ColorScheme.light;
+    }
     in-out property <int> feed-index: 0;
     in-out property <int> article-index: -1;
     in property <string> reader-title;
@@ -77,6 +106,7 @@ export component MainWindow inherits Window {
     callback close-settings();
     callback save-settings(string, string, string);
     callback set-mark-read-on-open(bool);
+    callback set-dark-mode(bool);
     callback next-article();
     callback prev-article();
     callback select-feed(int);
@@ -120,7 +150,7 @@ export component MainWindow inherits Window {
         VerticalLayout {
         Rectangle {
             height: 52px;
-            background: #ffffff;
+            background: Theme.surface;
             HorizontalLayout {
                 padding: 12px;
                 spacing: 12px;
@@ -134,12 +164,12 @@ export component MainWindow inherits Window {
 
                 Rectangle {
                     width: 1px;
-                    background: #e2e2de;
+                    background: Theme.border;
                 }
 
                 Text {
                     text: root.status;
-                    color: #6b6b66;
+                    color: Theme.text-muted;
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
@@ -147,13 +177,13 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: root.syncing ? "Syncing…" : "";
-                    color: #8a6d3b;
+                    color: Theme.warning;
                     vertical-alignment: center;
                 }
 
                 Text {
                     text: root.last-synced;
-                    color: #999990;
+                    color: Theme.text-faint;
                     font-size: 11px;
                     vertical-alignment: center;
                 }
@@ -178,13 +208,13 @@ export component MainWindow inherits Window {
 
         Rectangle {
             height: 1px;
-            background: #e2e2de;
+            background: Theme.border;
         }
 
         HorizontalLayout {
             Rectangle {
                 width: 260px;
-                background: #fbfbf9;
+                background: Theme.surface-alt;
 
                 VerticalLayout {
                     padding: 12px;
@@ -193,14 +223,14 @@ export component MainWindow inherits Window {
                     Text {
                         text: "Feeds";
                         font-weight: 600;
-                        color: #55554f;
+                        color: Theme.text-muted;
                     }
 
                     ListView {
                         for feed[i] in root.feeds : Rectangle {
                             height: 38px;
                             border-radius: 6px;
-                            background: i == root.feed-index ? #e6edf7 : transparent;
+                            background: i == root.feed-index ? Theme.feed-selected : transparent;
 
                             HorizontalLayout {
                                 padding: 8px;
@@ -224,14 +254,14 @@ export component MainWindow inherits Window {
                                     Text {
                                         text: feed.folder;
                                         font-size: 10px;
-                                        color: #8a8a83;
+                                        color: Theme.text-faint;
                                         overflow: elide;
                                     }
                                 }
 
                                 Text {
                                     text: feed.unread > 0 ? "(" + feed.unread + ")" : "";
-                                    color: #4a6fa5;
+                                    color: Theme.accent;
                                     font-size: 11px;
                                     vertical-alignment: center;
                                 }
@@ -252,12 +282,12 @@ export component MainWindow inherits Window {
 
             Rectangle {
                 width: 1px;
-                background: #e2e2de;
+                background: Theme.border;
             }
 
             Rectangle {
                 width: 400px;
-                background: #ffffff;
+                background: Theme.surface;
 
                 VerticalLayout {
                     padding: 10px;
@@ -268,7 +298,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Articles";
                             font-weight: 600;
-                            color: #55554f;
+                            color: Theme.text-muted;
                             horizontal-stretch: 1;
                             vertical-alignment: center;
                         }
@@ -293,7 +323,7 @@ export component MainWindow inherits Window {
                         for article[i] in root.articles : Rectangle {
                             height: 64px;
                             border-radius: 6px;
-                            background: i == root.article-index ? #eef3fa : transparent;
+                            background: i == root.article-index ? Theme.article-selected : transparent;
 
                             HorizontalLayout {
                                 padding: 8px;
@@ -301,7 +331,7 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: article.read ? "" : "●";
-                                    color: #3b6fb6;
+                                    color: Theme.accent;
                                     font-size: 8px;
                                     vertical-alignment: center;
                                 }
@@ -318,19 +348,19 @@ export component MainWindow inherits Window {
                                         spacing: 6px;
                                         Text {
                                             text: article.feed;
-                                            color: #77776f;
+                                            color: Theme.text-muted;
                                             font-size: 11px;
                                             overflow: elide;
                                             horizontal-stretch: 1;
                                         }
                                         Text {
                                             text: article.time;
-                                            color: #999990;
+                                            color: Theme.text-faint;
                                             font-size: 11px;
                                         }
                                         Text {
                                             text: article.starred ? "★" : "";
-                                            color: #c49a23;
+                                            color: Theme.star;
                                             font-size: 11px;
                                         }
                                     }
@@ -352,11 +382,11 @@ export component MainWindow inherits Window {
 
             Rectangle {
                 width: 1px;
-                background: #e2e2de;
+                background: Theme.border;
             }
 
             Rectangle {
-                background: #ffffff;
+                background: Theme.surface;
 
                 VerticalLayout {
                     padding: 24px;
@@ -367,7 +397,7 @@ export component MainWindow inherits Window {
                         Text {
                             text: "Reader";
                             font-weight: 600;
-                            color: #55554f;
+                            color: Theme.text-muted;
                             horizontal-stretch: 1;
                             vertical-alignment: center;
                         }
@@ -398,13 +428,13 @@ export component MainWindow inherits Window {
 
                             Text {
                                 text: root.reader-meta;
-                                color: #77776f;
+                                color: Theme.text-muted;
                                 font-size: 12px;
                             }
 
                             Rectangle {
                                 height: 1px;
-                                background: #ecece8;
+                                background: Theme.divider;
                             }
 
                             for block in root.reader-blocks : VerticalLayout {
@@ -412,11 +442,11 @@ export component MainWindow inherits Window {
 
                                 if block.kind == "rule" : Rectangle {
                                     height: 1px;
-                                    background: #ecece8;
+                                    background: Theme.divider;
                                 }
 
                                 if block.kind == "image" : Rectangle {
-                                    background: #f4f4f1;
+                                    background: Theme.block;
                                     border-radius: 6px;
                                     VerticalLayout {
                                         padding: 10px;
@@ -444,7 +474,7 @@ export component MainWindow inherits Window {
                                 }
 
                                 if block.kind == "code" || block.kind == "table" : Rectangle {
-                                    background: #f4f4f1;
+                                    background: Theme.block;
                                     border-radius: 6px;
                                     VerticalLayout {
                                         padding: 10px;
@@ -453,7 +483,7 @@ export component MainWindow inherits Window {
                                             text: block.label;
                                             font-size: 12px;
                                             font-weight: 600;
-                                            color: #77776f;
+                                            color: Theme.text-muted;
                                         }
                                         ReaderText {
                                             text: block.text;
@@ -468,13 +498,13 @@ export component MainWindow inherits Window {
 
                                     if block.kind == "quote" : Rectangle {
                                         width: 3px;
-                                        background: #d8d8d2;
+                                        background: Theme.border;
                                     }
 
                                     if block.label != "" : Text {
                                         text: block.label;
                                         width: 30px;
-                                        color: #77776f;
+                                        color: Theme.text-muted;
                                         font-size: 14px;
                                         vertical-alignment: top;
                                     }
@@ -501,7 +531,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #00000066;
+        background: Theme.overlay;
 
         TouchArea {
             width: parent.width;
@@ -510,13 +540,13 @@ export component MainWindow inherits Window {
 
         Rectangle {
             width: 460px;
-            height: 520px;
+            height: 560px;
             x: (parent.width - 460px) / 2;
-            y: (parent.height - 520px) / 2;
-            background: #ffffff;
+            y: (parent.height - 560px) / 2;
+            background: Theme.surface;
             border-radius: 10px;
             border-width: 1px;
-            border-color: #d8d8d2;
+            border-color: Theme.settings-border;
 
             VerticalLayout {
                 padding: 24px;
@@ -530,7 +560,7 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: "Enter your server URL and API password. The password is exchanged for a token and is not saved.";
-                    color: #6b6b66;
+                    color: Theme.text-muted;
                     font-size: 12px;
                     wrap: word-wrap;
                 }
@@ -543,9 +573,17 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                CheckBox {
+                    text: "Dark theme";
+                    checked <=> root.dark-mode;
+                    toggled => {
+                        root.set-dark-mode(self.checked);
+                    }
+                }
+
                 Text {
                     text: "Server URL";
-                    color: #55554f;
+                    color: Theme.text-muted;
                     font-size: 12px;
                     font-weight: 600;
                 }
@@ -556,7 +594,7 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: "Username or email";
-                    color: #55554f;
+                    color: Theme.text-muted;
                     font-size: 12px;
                     font-weight: 600;
                 }
@@ -567,7 +605,7 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: "API password";
-                    color: #55554f;
+                    color: Theme.text-muted;
                     font-size: 12px;
                     font-weight: 600;
                 }
@@ -578,7 +616,7 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: root.settings-status;
-                    color: #b03a2e;
+                    color: Theme.danger;
                     font-size: 12px;
                     wrap: word-wrap;
                 }
