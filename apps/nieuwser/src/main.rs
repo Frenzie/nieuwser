@@ -1741,3 +1741,59 @@ mod article_model_tests {
         assert_eq!(model.row_data(1).unwrap().id, "c");
     }
 }
+
+#[cfg(test)]
+mod reader_layout_tests {
+    use super::*;
+    use slint::platform::{
+        Platform, WindowAdapter,
+        software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
+    };
+
+    struct Headless(Rc<MinimalSoftwareWindow>);
+
+    impl Platform for Headless {
+        fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn long_reader_renders_and_scrolls() {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Headless(window))).unwrap();
+        let ui = MainWindow::new().unwrap();
+        ui.window().set_size(slint::PhysicalSize::new(1000, 800));
+
+        let blocks: Vec<ReaderBlock> = (0..300)
+            .map(|index| {
+                let text = StyledText::from_plain_text(&format!(
+                    "Paragraph {index}: Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+                ));
+                ReaderBlock {
+                    kind: "p".into(),
+                    label: "".into(),
+                    text: text.clone(),
+                    chunks: ModelRc::new(VecModel::from(vec![text])),
+                    indent: 0,
+                    source: "".into(),
+                    image: slint::Image::default(),
+                    has_image: false,
+                }
+            })
+            .collect();
+        let rows = make_reader_rows("A long article", "Example feed", blocks);
+        ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
+        ui.show().unwrap();
+        slint::platform::update_timers_and_animations();
+
+        let first = ui.window().take_snapshot().unwrap();
+        ui.invoke_scroll_reader(-500.0);
+        slint::platform::update_timers_and_animations();
+        let second = ui.window().take_snapshot().unwrap();
+
+        assert_eq!(first.width(), second.width());
+        assert_eq!(first.height(), second.height());
+        assert_ne!(first.as_bytes(), second.as_bytes());
+    }
+}
