@@ -144,6 +144,44 @@ component SelectionContext inherits ContextMenuArea {
     }
 }
 
+component ReaderSkeleton inherits Rectangle {
+    background: Theme.surface;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 12px;
+
+        Rectangle {
+            width: parent.width * 0.58;
+            height: 24px;
+            border-radius: 4px;
+            background: Theme.block;
+        }
+        Rectangle {
+            width: parent.width * 0.32;
+            height: 12px;
+            border-radius: 3px;
+            background: Theme.block;
+        }
+        Rectangle {
+            width: parent.width;
+            height: 1px;
+            background: Theme.divider;
+        }
+        for index in 6 : Rectangle {
+            width: parent.width * (index == 5 ? 0.54 : 0.92);
+            height: 13px;
+            border-radius: 3px;
+            background: Theme.block;
+        }
+        Text {
+            text: "Loading article…";
+            color: Theme.text-faint;
+            font-size: 12px;
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "Nieuwser";
     icon: @image-url("icons/nieuwser.svg");
@@ -185,6 +223,7 @@ export component MainWindow inherits Window {
     in-out property <int> article-index: -1;
     in property <string> reader-title;
     in property <string> reader-meta;
+    in property <bool> reader-loading;
     in property <[ReaderBlock]> reader-blocks;
     in property <string> status;
     in property <string> last-synced;
@@ -658,42 +697,45 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    reader-scroll := ScrollView {
-                        VerticalLayout {
-                            spacing: 12px;
+                    reader-frame := Rectangle {
+                        clip: true;
 
-                            Text {
-                                text: root.reader-title;
-                                font-size: 24px;
-                                font-weight: 700;
-                                wrap: word-wrap;
-                            }
+                        reader-scroll := ScrollView {
+                            VerticalLayout {
+                                spacing: 12px;
 
-                            Text {
-                                text: root.reader-meta;
-                                color: Theme.text-muted;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                            }
+                                Text {
+                                    text: root.reader-title;
+                                    font-size: 24px;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
+                                }
 
-                            if root.reader-title == "" : Text {
-                                text: "Select an article to read.";
-                                color: Theme.text-faint;
-                                font-size: 13px;
-                            }
+                                Text {
+                                    text: root.reader-meta;
+                                    color: Theme.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
 
-                            Rectangle {
-                                height: 1px;
-                                background: Theme.divider;
-                            }
+                                if root.reader-title == "" : Text {
+                                    text: "Select an article to read.";
+                                    color: Theme.text-faint;
+                                    font-size: 13px;
+                                }
 
-                            for block in root.reader-blocks : VerticalLayout {
-                                spacing: 4px;
-
-                                if block.kind == "rule" : Rectangle {
+                                Rectangle {
                                     height: 1px;
                                     background: Theme.divider;
                                 }
+
+                                for block in root.reader-blocks : VerticalLayout {
+                                    spacing: 4px;
+
+                                    if block.kind == "rule" : Rectangle {
+                                        height: 1px;
+                                        background: Theme.divider;
+                                    }
 
                                 if block.kind == "image" : Rectangle {
                                     background: Theme.block;
@@ -783,10 +825,12 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                        if root.reader-loading : ReaderSkeleton { }
                     }
                 }
                 }
             }
+        }
         }
     }
 

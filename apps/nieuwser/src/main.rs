@@ -750,6 +750,7 @@ fn load_stream(
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
     ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+    ui.set_reader_loading(false);
     Ok(())
 }
 
@@ -896,6 +897,7 @@ fn select_article(
     };
     let id = summary.id.clone();
     ui.invoke_scroll_reader_to_top();
+    ui.set_reader_loading(false);
 
     let mut meta = summary.feed_title.clone();
     if let Some(author) = summary.author.as_ref().filter(|a| !a.trim().is_empty()) {
@@ -935,15 +937,14 @@ fn select_article(
     ui.set_reader_title(title.clone().into());
     ui.set_reader_meta(meta.clone().into());
     if needs_fetch {
-        set_reader_message(
-            ui,
-            if allow_fetch {
-                "No cached content. Loading…"
-            } else {
-                "No cached content."
-            },
-        );
+        if allow_fetch {
+            ui.set_reader_loading(true);
+            ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+        } else {
+            set_reader_message(ui, "No cached content.");
+        }
     } else {
+        ui.set_reader_loading(true);
         let blocks = html_to_blocks(html, item.href.as_deref());
         let mut image_urls = Vec::new();
         let rows: Vec<ReaderBlock> = blocks
@@ -964,6 +965,7 @@ fn select_article(
         } else {
             let blocks = ModelRc::new(VecModel::from(rows));
             ui.set_reader_blocks(blocks.clone());
+            ui.set_reader_loading(false);
             spawn_reader_images(ui, store, state, image_urls);
             remember_reader(
                 id.clone(),
@@ -1172,6 +1174,7 @@ fn set_reader_message(ui: &MainWindow, message: &str) {
         has_image: false,
     };
     ui.set_reader_blocks(ModelRc::new(VecModel::from(vec![block])));
+    ui.set_reader_loading(false);
 }
 
 fn open_external(url: &str) -> std::io::Result<()> {
