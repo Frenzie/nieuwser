@@ -946,6 +946,7 @@ fn reload_preserving_selection(
             .position(|item| item.id == id);
         if let Some(found) = found {
             ui.set_article_index(found as i32);
+            ui.invoke_reveal_article(found as i32);
             select_article(ui, store, state, found as i32, false, false)?;
         }
     }
@@ -1326,7 +1327,7 @@ fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>
         (current + delta).clamp(0, len - 1)
     };
     ui.set_article_index(next);
-    ui.set_article_content_y(next as f32 * 64.0);
+    ui.invoke_reveal_article(next);
     apply_selection(state, next, false, false);
     sync_article_rows(ui, state);
     let _ = select_article(ui, store, state, next, true, true);
@@ -1798,5 +1799,25 @@ mod reader_layout_tests {
         assert_eq!(first.width(), second.width());
         assert_eq!(first.height(), second.height());
         assert_ne!(first.as_bytes(), second.as_bytes());
+
+        let articles: Vec<ArticleRow> = (0..100)
+            .map(|index| ArticleRow {
+                id: format!("{index}").into(),
+                title: format!("Article {index}").into(),
+                feed: "Feed".into(),
+                time: "now".into(),
+                read: false,
+                starred: false,
+                selected: index == 50,
+            })
+            .collect();
+        ui.set_articles(ModelRc::new(VecModel::from(articles)));
+        slint::platform::update_timers_and_animations();
+        let list_before = ui.window().take_snapshot().unwrap();
+        ui.set_article_index(50);
+        ui.invoke_reveal_article(50);
+        slint::platform::update_timers_and_animations();
+        let list_after = ui.window().take_snapshot().unwrap();
+        assert_ne!(list_before.as_bytes(), list_after.as_bytes());
     }
 }

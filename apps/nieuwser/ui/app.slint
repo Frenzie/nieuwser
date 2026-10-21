@@ -278,6 +278,19 @@ export component MainWindow inherits Window {
         reader-scroll.content-y = 0px;
     }
 
+    public function reveal-article(index: int) {
+        let row-y = index * 64px;
+        let top = 0px - article-list.content-y;
+        if (row-y < top) {
+            article-list.content-y = 0px - row-y;
+        } else if (row-y + 64px > top + article-list.visible-height) {
+            article-list.content-y = 0px - (row-y + 64px - article-list.visible-height);
+        }
+        article-list.content-y = Math.min(0px, Math.max(
+            article-list.content-y,
+            article-list.visible-height - article-list.content-height));
+    }
+
     main-focus := FocusScope {
         key-pressed(event) => {
             if (root.settings-open) {
@@ -558,7 +571,7 @@ export component MainWindow inherits Window {
                         font-size: 12px;
                     }
 
-                    ListView {
+                    article-list := ListView {
                         content-y <=> root.article-content-y;
                         for article[i] in root.articles : Rectangle {
                             height: 64px;
