@@ -166,6 +166,39 @@ impl Store {
         if has_auth_token == 0 {
             conn.execute("ALTER TABLE account ADD COLUMN auth_token TEXT", [])?;
         }
+
+        let had_fts: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'items_fts'",
+            [],
+            |row| row.get(0),
+        )?;
+        conn.execute_batch(
+            r#"
+            CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+                title, author, summary_html, content_html,
+                content='items', content_rowid='rowid',
+                tokenize='unicode61 remove_diacritics 2'
+            );
+            CREATE TRIGGER IF NOT EXISTS items_fts_ai AFTER INSERT ON items BEGIN
+                INSERT INTO items_fts(rowid, title, author, summary_html, content_html)
+                VALUES (new.rowid, new.title, new.author, new.summary_html, new.content_html);
+            END;
+            CREATE TRIGGER IF NOT EXISTS items_fts_ad AFTER DELETE ON items BEGIN
+                INSERT INTO items_fts(items_fts, rowid, title, author, summary_html, content_html)
+                VALUES ('delete', old.rowid, old.title, old.author, old.summary_html, old.content_html);
+            END;
+            CREATE TRIGGER IF NOT EXISTS items_fts_au
+                AFTER UPDATE OF title, author, summary_html, content_html ON items BEGIN
+                INSERT INTO items_fts(items_fts, rowid, title, author, summary_html, content_html)
+                VALUES ('delete', old.rowid, old.title, old.author, old.summary_html, old.content_html);
+                INSERT INTO items_fts(rowid, title, author, summary_html, content_html)
+                VALUES (new.rowid, new.title, new.author, new.summary_html, new.content_html);
+            END;
+            "#,
+        )?;
+        if had_fts == 0 {
+            conn.execute("INSERT INTO items_fts(items_fts) VALUES ('rebuild')", [])?;
+        }
         Ok(())
     }
 
@@ -470,15 +503,25 @@ impl Store {
             clauses.push("items.read = 0".into());
         }
         if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
-            clauses.push(
-                "(items.title LIKE ? OR items.author LIKE ?
-                  OR items.content_html LIKE ? OR items.summary_html LIKE ?
-                  OR COALESCE(feeds.title, '') LIKE ?)"
-                    .into(),
-            );
             let pattern = format!("%{}%", term.trim());
-            for _ in 0..5 {
-                values.push(Value::Text(pattern.clone()));
+            if let Some(query) = fts_query(term) {
+                clauses.push(
+                    "(items.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)
+                      OR COALESCE(feeds.title, '') LIKE ?)"
+                        .into(),
+                );
+                values.push(Value::Text(query));
+                values.push(Value::Text(pattern));
+            } else {
+                clauses.push(
+                    "(items.title LIKE ? OR items.author LIKE ?
+                      OR items.content_html LIKE ? OR items.summary_html LIKE ?
+                      OR COALESCE(feeds.title, '') LIKE ?)"
+                        .into(),
+                );
+                for _ in 0..5 {
+                    values.push(Value::Text(pattern.clone()));
+                }
             }
         }
         values.push(Value::Integer(limit.clamp(1, 1000)));
@@ -894,6 +937,15 @@ fn is_label(id: &str) -> bool {
     id.contains("/label/")
 }
 
+fn fts_query(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" AND "))
+}
+
 fn stream_where(stream: &Stream) -> (String, Vec<Value>) {
     match stream {
         Stream::All => ("1 = 1".into(), vec![]),
@@ -1092,7 +1144,7 @@ mod tests {
         second.content = Some(Content {
             content: "<p>FreshRSS rocks</p>".into(),
         });
-        store.upsert_items(&[first, second]).unwrap();
+        store.upsert_items(&[first.clone(), second]).unwrap();
 
         let search = |term: &str| {
             store
@@ -1103,9 +1155,47 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(search("rust"), vec!["1"]);
+        assert_eq!(search("rus"), vec!["1"]);
         assert_eq!(search("alice"), vec!["2"]);
         assert_eq!(search("freshrss"), vec!["2"]);
         assert_eq!(search("one"), vec!["1", "2"]);
+
+        first.title = "Python news".into();
+        store.upsert_items(&[first]).unwrap();
+        assert!(search("rust").is_empty());
+        assert_eq!(search("python"), vec!["1"]);
+    }
+
+    #[test]
+    fn backfills_search_index_for_existing_items() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE items (
+                id TEXT PRIMARY KEY,
+                feed_id TEXT,
+                title TEXT NOT NULL,
+                author TEXT,
+                published INTEGER,
+                updated INTEGER,
+                timestamp_usec INTEGER NOT NULL DEFAULT 0,
+                crawl_time_msec INTEGER NOT NULL DEFAULT 0,
+                href TEXT,
+                summary_html TEXT,
+                content_html TEXT,
+                read INTEGER NOT NULL DEFAULT 0,
+                starred INTEGER NOT NULL DEFAULT 0,
+                fetched_at INTEGER NOT NULL
+            );
+            INSERT INTO items(id, feed_id, title, content_html, fetched_at)
+            VALUES ('1', 'feed/1', 'Legacy rust', '<p>body</p>', 0);",
+        )
+        .unwrap();
+        let store = Store::from_connection(conn).unwrap();
+        let results = store
+            .items(&Stream::All, 10, 0, false, Some("legacy"))
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "1");
     }
 
     #[test]
