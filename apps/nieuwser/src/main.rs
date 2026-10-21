@@ -338,6 +338,8 @@ fn bind_callbacks(
         ui.on_select_feed(move |index| {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_article_content_y(0.0);
+                ui.set_compact_page("list".into());
+                ui.set_feed_drawer_open(false);
                 if let Err(error) = load_stream(&ui, &store, &state, index) {
                     ui.set_status(format!("Load failed: {error}").into());
                 }
@@ -355,6 +357,7 @@ fn bind_callbacks(
                     return;
                 }
                 ui.set_article_index(index);
+                ui.set_compact_page("reader".into());
                 sync_article_rows(&ui, &state);
                 let mark_read = !ctrl && !shift;
                 let _ = select_article(&ui, &store, &state, index, mark_read, mark_read);
@@ -759,6 +762,7 @@ fn load_stream(
     push_articles(ui, state);
     ui.set_has_more_articles(has_more);
     ui.set_article_index(-1);
+    ui.set_compact_page("list".into());
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
     let rows = make_reader_rows("", "", Vec::new());
@@ -1327,6 +1331,7 @@ fn move_article(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>
         (current + delta).clamp(0, len - 1)
     };
     ui.set_article_index(next);
+    ui.set_compact_page("reader".into());
     ui.invoke_reveal_article(next);
     apply_selection(state, next, false, false);
     sync_article_rows(ui, state);
@@ -1819,5 +1824,13 @@ mod reader_layout_tests {
         slint::platform::update_timers_and_animations();
         let list_after = ui.window().take_snapshot().unwrap();
         assert_ne!(list_before.as_bytes(), list_after.as_bytes());
+        ui.window().set_size(slint::PhysicalSize::new(600, 700));
+        ui.set_compact_page("list".into());
+        slint::platform::update_timers_and_animations();
+        let compact_list = ui.window().take_snapshot().unwrap();
+        ui.set_compact_page("reader".into());
+        slint::platform::update_timers_and_animations();
+        let compact_reader = ui.window().take_snapshot().unwrap();
+        assert_ne!(compact_list.as_bytes(), compact_reader.as_bytes());
     }
 }
