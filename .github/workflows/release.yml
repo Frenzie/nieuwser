@@ -23,6 +23,7 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
+      source_date_epoch: ${{ steps.resolve.outputs.source_date_epoch }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,8 +51,11 @@ jobs:
             exit 1
           fi
           case "$v" in *-*) pre=true ;; *) pre=false ;; esac
-          echo "version=$v" >>"$GITHUB_OUTPUT"
-          echo "prerelease=$pre" >>"$GITHUB_OUTPUT"
+          {
+            echo "version=$v"
+            echo "prerelease=$pre"
+            echo "source_date_epoch=$(git show -s --format=%ct HEAD)"
+          } >>"$GITHUB_OUTPUT"
           echo "### Nieuwser v$v (\`${GITHUB_SHA::9}\`)" >>"$GITHUB_STEP_SUMMARY"
 
   linux:
@@ -67,6 +71,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.source_date_epoch }}
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
@@ -75,13 +80,23 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig-dev libfreetype-dev pkg-config dpkg-dev desktop-file-utils
+          sudo apt-get install -y libfontconfig-dev libfreetype-dev pkg-config dpkg-dev \
+            desktop-file-utils xvfb libxkbcommon-x11-0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: linux-${{ matrix.arch }}
       - name: Package
         run: packaging/linux/package.sh
+      - name: Smoke test AppImage
+        run: |
+          set +e
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 8s dist/release/*.AppImage
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            exit "$status"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: release-linux-${{ matrix.arch }}
@@ -93,6 +108,7 @@ jobs:
     runs-on: macos-latest
     env:
       NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.source_date_epoch }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
@@ -118,6 +134,7 @@ jobs:
     runs-on: windows-latest
     env:
       NIEUWSER_VERSION: ${{ needs.version.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.version.outputs.source_date_epoch }}
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7

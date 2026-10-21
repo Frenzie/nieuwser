@@ -84,6 +84,9 @@ Builds are unsigned: the macOS app is ad-hoc signed only, and the Windows packag
 code-signing certificate, so Gatekeeper/SmartScreen will warn. Review the draft release and
 publish it manually. Local packaging scripts live in `packaging/`.
 
+The Linux AppImage bundles the X11 keyboard libraries winit loads at runtime. Run it with
+`--integrate` to install its desktop entry and icon into the user application menu.
+
 ## License
 
 GPL-3.0-or-later (see `Cargo.toml`).

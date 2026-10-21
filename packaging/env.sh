@@ -9,6 +9,7 @@
 #   APP_TITLE             human-readable application name
 #   APP_REPO              GitHub repository (owner/name)
 #   NIEUWSER_BUILD_DATE   UTC build date, YYYY-MM-DD
+#   SOURCE_DATE_EPOCH     commit timestamp for reproducible package metadata
 #   CARGO_TARGET_DIR      cargo target directory (default: $ROOT/target)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,6 +39,7 @@ APP_REPO="${GITHUB_REPOSITORY:-Frenzie/nieuwser}"
 export APP_ID APP_TITLE APP_REPO
 
 export NIEUWSER_BUILD_DATE="${NIEUWSER_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD 2>/dev/null || date +%s)}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 
 copy_docs() {

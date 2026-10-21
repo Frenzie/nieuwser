@@ -55,6 +55,7 @@ mkdir -p "$STAGE/usr/share/doc/nieuwser"
 copy_docs "$STAGE/usr/share/doc/nieuwser"
 # Normalize modes: 755 for binaries/directories, 644 for data files.
 chmod -R u+rwX,go+rX,go-w "$STAGE"
+find "$STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$STAGE/usr/share/applications/$APP_ID.desktop"
@@ -69,7 +70,8 @@ fi
 # ---- .tar.gz -----------------------------------------------------------------------------------
 mkdir -p "$WORK/tar"
 cp -R "$STAGE/usr" "$WORK/tar/$BASENAME"
-tar -C "$WORK/tar" -czf "$DIST/$BASENAME.tar.gz" "$BASENAME"
+tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+  -C "$WORK/tar" -czf "$DIST/$BASENAME.tar.gz" "$BASENAME"
 echo "wrote $DIST/$BASENAME.tar.gz"
 
 # ---- .deb --------------------------------------------------------------------------------------
@@ -77,6 +79,7 @@ DEB="$WORK/deb"
 mkdir -p "$DEB/DEBIAN"
 cp -R "$STAGE/usr" "$DEB/"
 INSTALLED_SIZE="$(du -sk "$DEB/usr" | cut -f1)"
+# winit opens xkbcommon-x11 with dlopen, so it is not in the binary's ELF dependencies.
 cat >"$DEB/DEBIAN/control" <<EOF
 Package: nieuwser
 Version: $VERSION
@@ -86,12 +89,13 @@ Architecture: $DEB_ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: $MAINTAINER
 Homepage: https://github.com/$APP_REPO
-Depends: libc6, libgcc-s1, libfontconfig1, libfreetype6
+Depends: libc6, libgcc-s1, libfontconfig1, libfreetype6, libxkbcommon0, libxkbcommon-x11-0
 Description: Native offline-first desktop client for FreshRSS
  Nieuwser is a native reader for FreshRSS. It keeps a local SQLite cache of
  feeds and articles, supports local search, and queues read and starred
  changes until the next sync.
 EOF
+find "$DEB" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 dpkg-deb --build --root-owner-group "$DEB" "$DIST/$BASENAME.deb" >/dev/null
 echo "wrote $DIST/$BASENAME.deb"
 
@@ -138,9 +142,44 @@ chmod 755 "$TOOL"
 
 APPDIR="$WORK/Nieuwser.AppDir"
 cp -R "$STAGE" "$APPDIR"
+# winit opens these with dlopen(), so they are not in the binary's ELF dependencies.
+LDCONFIG="$(command -v ldconfig || true)"
+[ -n "$LDCONFIG" ] || LDCONFIG=/sbin/ldconfig
+for lib in libxkbcommon-x11.so.0 libxkbcommon.so.0; do
+  path="$("$LDCONFIG" -p | awk -v name="$lib" '$1 == name { print $NF; exit }')"
+  if [ -z "$path" ]; then
+    echo "error: $lib not found" >&2
+    exit 1
+  fi
+  install -Dm644 "$path" "$APPDIR/usr/lib/nieuwser/$lib"
+done
 cat >"$APPDIR/AppRun" <<'EOF'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
+
+if [ "${1:-}" = "--integrate" ]; then
+    if [ -z "${APPIMAGE:-}" ]; then
+        echo "Run --integrate from the packaged AppImage." >&2
+        exit 1
+    fi
+    data="${XDG_DATA_HOME:-$HOME/.local/share}"
+    mkdir -p "$data/applications" "$data/icons/hicolor/512x512/apps" \
+        "$data/icons/hicolor/scalable/apps"
+    sed "s|^Exec=.*|Exec=\"$APPIMAGE\"|" "$HERE/io.github.frenzie.nieuwser.desktop" \
+        >"$data/applications/io.github.frenzie.nieuwser.desktop"
+    install -m644 "$HERE/usr/share/icons/hicolor/512x512/apps/io.github.frenzie.nieuwser.png" \
+        "$data/icons/hicolor/512x512/apps/io.github.frenzie.nieuwser.png"
+    install -m644 "$HERE/usr/share/icons/hicolor/scalable/apps/io.github.frenzie.nieuwser.svg" \
+        "$data/icons/hicolor/scalable/apps/io.github.frenzie.nieuwser.svg"
+    command -v update-desktop-database >/dev/null && update-desktop-database "$data/applications" || true
+    command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -f -t "$data/icons/hicolor" >/dev/null 2>&1 || true
+    echo "Installed Nieuwser desktop entry."
+    exit 0
+fi
+
+export LD_LIBRARY_PATH="$HERE/usr/lib/nieuwser${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-1}"
+export MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-65536}"
 exec "$HERE/usr/bin/nieuwser" "$@"
 EOF
 chmod 755 "$APPDIR/AppRun"
