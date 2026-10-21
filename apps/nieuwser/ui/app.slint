@@ -157,6 +157,53 @@ component ToolbarIconButton inherits Rectangle {
     }
 }
 
+component ShortcutRow inherits Rectangle {
+    in property <string> label;
+    in property <string> key-text;
+    in property <bool> capturing: false;
+    callback edit();
+
+    height: 32px;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Text {
+            text: root.label;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            font-size: 13px;
+        }
+
+        Rectangle {
+            width: 130px;
+            height: 28px;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: root.capturing ? Theme.accent : Theme.border;
+            background: Theme.block;
+
+            Text {
+                text: root.capturing ? "Press a key…" : root.key-text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-family: "monospace";
+                font-size: 12px;
+                color: Theme.text;
+            }
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: pointer;
+                accessible-role: button;
+                accessible-label: "Change shortcut for " + root.label;
+                clicked => { root.edit(); }
+            }
+        }
+    }
+}
+
 component SelectionContext inherits ContextMenuArea {
     in property <bool> has-selection;
     callback open-requested();
@@ -365,9 +412,20 @@ export component MainWindow inherits Window {
     in-out property <string> settings-url;
     in-out property <string> settings-email;
     in-out property <string> settings-password;
-    in property <string> settings-status;
+    in-out property <string> settings-status;
     in-out property <bool> settings-busy;
     in property <bool> settings-has-account;
+
+    in-out property <string> shortcut-next: "j";
+    in-out property <string> shortcut-prev: "k";
+    in-out property <string> shortcut-read: "m";
+    in-out property <string> shortcut-star: "s";
+    in-out property <string> shortcut-open: "o";
+    in-out property <string> shortcuts-status;
+    private property <bool> shortcuts-open: false;
+    private property <string> capturing-shortcut;
+    private property <length> shortcuts-dialog-width: min(560px, root.width - 32px);
+    private property <length> shortcuts-dialog-height: min(640px, root.height - 32px);
 
     callback refresh();
     callback open-settings();
@@ -376,6 +434,8 @@ export component MainWindow inherits Window {
     callback set-mark-read-on-open(bool);
     callback set-mark-read-on-open-browser(bool);
     callback set-dark-mode(bool);
+    callback set-shortcut(string, string);
+    callback reset-shortcuts();
     callback next-article();
     callback prev-article();
     callback select-feed(int);
@@ -413,6 +473,23 @@ export component MainWindow inherits Window {
         reader-scroll.content-y = 0px;
     }
 
+    public function open-shortcuts() {
+        root.settings-open = false;
+        root.settings-password = "";
+        root.settings-status = "";
+        root.capturing-shortcut = "";
+        root.shortcuts-status = "";
+        root.shortcuts-open = true;
+        shortcuts-help.focus();
+    }
+
+    public function close-shortcuts() {
+        root.shortcuts-open = false;
+        root.capturing-shortcut = "";
+        root.shortcuts-status = "";
+        main-focus.focus();
+    }
+
     public function reveal-article(index: int) {
         let row-y = index * 64px;
         let top = 0px - article-list.content-y;
@@ -438,6 +515,9 @@ export component MainWindow inherits Window {
                 } else {
                     reject
                 }
+            } else if (event.text == "?") {
+                root.open-shortcuts();
+                accept
             } else if (root.compact && root.feed-drawer-open && event.text == Key.Escape) {
                 root.feed-drawer-open = false;
                 accept
@@ -462,19 +542,22 @@ export component MainWindow inherits Window {
             } else if (event.text == Key.UpArrow) {
                 root.scroll-reader(64px);
                 accept
-            } else if (event.text == "o" && !event.modifiers.alt && !event.modifiers.meta) {
+            } else if ((event.text == root.shortcut-open
+                    && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)
+                || (event.text == "o" && event.modifiers.control
+                    && !event.modifiers.alt && !event.modifiers.meta)) {
                 root.open-selection();
                 accept
-            } else if (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+            } else if (event.text == root.shortcut-next && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.next-article();
                 accept
-            } else if (event.text == "k" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+            } else if (event.text == root.shortcut-prev && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.prev-article();
                 accept
-            } else if (event.text == "m" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+            } else if (event.text == root.shortcut-read && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.toggle-read();
                 accept
-            } else if (event.text == "s" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+            } else if (event.text == root.shortcut-star && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.toggle-star();
                 accept
             } else {
@@ -1232,6 +1315,12 @@ export component MainWindow inherits Window {
                     wrap: word-wrap;
                 }
 
+                Button {
+                    text: "Keyboard shortcuts…";
+                    enabled: !root.settings-busy;
+                    clicked => { root.open-shortcuts(); }
+                }
+
                 Rectangle {
                     vertical-stretch: 1;
                 }
@@ -1258,6 +1347,178 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        }
+    }
+
+    shortcuts-help := FocusScope {
+        visible: root.shortcuts-open;
+        width: root.width;
+        height: root.height;
+
+        key-pressed(event) => {
+            if (root.capturing-shortcut != "") {
+                if (event.text == Key.Escape) {
+                    root.capturing-shortcut = "";
+                    accept
+                } else if (event.text != "" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
+                    root.set-shortcut(root.capturing-shortcut, event.text);
+                    root.capturing-shortcut = "";
+                    accept
+                } else {
+                    reject
+                }
+            } else if (event.text == Key.Escape || event.text == "?") {
+                root.close-shortcuts();
+                accept
+            } else {
+                reject
+            }
+        }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: Theme.overlay;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            Rectangle {
+                width: root.shortcuts-dialog-width;
+                height: root.shortcuts-dialog-height;
+                x: (parent.width - root.shortcuts-dialog-width) / 2;
+                y: (parent.height - root.shortcuts-dialog-height) / 2;
+                background: Theme.surface;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.settings-border;
+
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "Keyboard shortcuts";
+                        font-size: 22px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "Click a key field, then press the new key. Escape cancels.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    shortcuts-scroll := ScrollView {
+                        vertical-stretch: 1;
+
+                        VerticalLayout {
+                            width: shortcuts-scroll.visible-width - 14px;
+                            spacing: 6px;
+
+                            Text {
+                                text: "Change shortcuts";
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+
+                            ShortcutRow {
+                                label: "Next article";
+                                key-text: root.shortcut-next;
+                                capturing: root.capturing-shortcut == "next";
+                                edit => {
+                                    root.capturing-shortcut = "next";
+                                    root.shortcuts-status = "";
+                                }
+                            }
+                            ShortcutRow {
+                                label: "Previous article";
+                                key-text: root.shortcut-prev;
+                                capturing: root.capturing-shortcut == "prev";
+                                edit => {
+                                    root.capturing-shortcut = "prev";
+                                    root.shortcuts-status = "";
+                                }
+                            }
+                            ShortcutRow {
+                                label: "Mark read / unread";
+                                key-text: root.shortcut-read;
+                                capturing: root.capturing-shortcut == "read";
+                                edit => {
+                                    root.capturing-shortcut = "read";
+                                    root.shortcuts-status = "";
+                                }
+                            }
+                            ShortcutRow {
+                                label: "Star / unstar";
+                                key-text: root.shortcut-star;
+                                capturing: root.capturing-shortcut == "star";
+                                edit => {
+                                    root.capturing-shortcut = "star";
+                                    root.shortcuts-status = "";
+                                }
+                            }
+                            ShortcutRow {
+                                label: "Open in browser";
+                                key-text: root.shortcut-open;
+                                capturing: root.capturing-shortcut == "open";
+                                edit => {
+                                    root.capturing-shortcut = "open";
+                                    root.shortcuts-status = "";
+                                }
+                            }
+
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.border;
+                            }
+
+                            Text {
+                                text: "Reader and navigation";
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                font-weight: 600;
+                            }
+
+                            VerticalLayout {
+                                spacing: 5px;
+                                HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll reader"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "?"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Show this help"; color: Theme.text-muted; font-size: 12px; } }
+                            }
+                        }
+                    }
+
+                    if root.shortcuts-status != "" : Text {
+                        text: root.shortcuts-status;
+                        color: Theme.danger;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        Button {
+                            text: "Reset defaults";
+                            clicked => { root.reset-shortcuts(); }
+                        }
+                        Button {
+                            text: "Close";
+                            clicked => { root.close-shortcuts(); }
+                        }
+                    }
+                }
+            }
         }
     }
 }

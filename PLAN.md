@@ -102,7 +102,9 @@ concurrency; inline images are promoted out of paragraphs.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read,
 `s` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
-close the compact feed drawer, or return from the compact reader to the article list.
+close the compact feed drawer, or return from the compact reader to the article list, and `?`
+opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
+bindings are stored in SQLite. Reader/navigation keys are fixed.
 Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
 also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
@@ -147,8 +149,9 @@ Working today:
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, feed selection, paginated article list, virtualized rich reader,
   loading skeleton, bundled emoji fallback, cached feed icons and article images, persisted
-  light/dark theme, read/star/mark-all actions, manual refresh that preserves the open article,
-  and browser opening from the reader toolbar, keyboard, double-click, and middle-click.
+  light/dark theme, editable shortcuts and shortcut help, read/star/mark-all actions, manual
+  refresh that preserves the open article, and browser opening from the reader toolbar, keyboard,
+  double-click, and middle-click.
 - Tests: 24 core tests plus 2 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, reconciliation, cache eviction, image URL safety,
   HTTP body limits, a mocked end-to-end sync, article-list reveal, and long-reader rendering.
@@ -174,6 +177,7 @@ Recent changes (2026-10-21):
 - Added the browser icon/button, `o`/`Ctrl+O`, and double/middle-click article opening.
 - Added a compact single-pane layout below 900 px, with a feed drawer, reader back button, and
   Escape navigation.
+- Added shortcut help (`?`) and editable single-key command bindings stored in SQLite.
 - Added the release workflow, reproducible Linux packaging, AppImage integration/smoke test,
   and clippy in CI.
 

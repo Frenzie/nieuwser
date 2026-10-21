@@ -40,6 +40,13 @@ const IMAGE_CACHE_LIMIT: usize = 48;
 const READER_CACHE_LIMIT: usize = 24;
 const MIN_WINDOW_WIDTH: f32 = 560.0;
 const MIN_WINDOW_HEIGHT: f32 = 480.0;
+const SHORTCUTS: [(&str, &str, &str); 5] = [
+    ("next", "shortcut_next", "j"),
+    ("prev", "shortcut_prev", "k"),
+    ("read", "shortcut_read", "m"),
+    ("star", "shortcut_star", "s"),
+    ("open", "shortcut_open", "o"),
+];
 
 static IMAGE_FETCH_SLOTS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(4));
@@ -64,6 +71,7 @@ fn main() -> Result<()> {
         .build()?;
     let ui = MainWindow::new()?;
     apply_window_geometry(&store, &ui);
+    apply_shortcuts(&ui, &store);
     ui.set_feed_width(saved_length(&store, "feed_width", 260.0).max(160.0));
     ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
@@ -283,6 +291,30 @@ fn bind_callbacks(
                 if let Err(error) = store.set_state("dark_mode", if value { "1" } else { "0" }) {
                     ui.set_status(format!("Settings failed: {error}").into());
                 }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.on_set_shortcut(move |action, value| {
+            if let Some(ui) = ui_weak.upgrade() {
+                set_shortcut(&store, &ui, action.as_str(), value.as_str());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.on_reset_shortcuts(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                for (_, key, default) in SHORTCUTS {
+                    let _ = store.set_state(key, default);
+                }
+                apply_shortcuts(&ui, &store);
+                ui.set_shortcuts_status("".into());
             }
         });
     }
@@ -625,6 +657,74 @@ fn save_window_geometry(store: &Store, window: &slint::Window) {
         let position = window.position();
         let _ = store.set_state("window_x", &position.x.to_string());
         let _ = store.set_state("window_y", &position.y.to_string());
+    }
+}
+
+fn normalize_shortcut(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    let key = chars.next()?;
+    if chars.next().is_some() || !key.is_ascii() || key.is_whitespace() || key == '?' {
+        return None;
+    }
+    Some(key.to_ascii_lowercase().to_string())
+}
+
+fn shortcut_value(store: &Store, key: &str, default: &str) -> String {
+    store
+        .state(key)
+        .ok()
+        .flatten()
+        .and_then(|value| normalize_shortcut(&value))
+        .unwrap_or_else(|| default.into())
+}
+
+fn apply_shortcuts(ui: &MainWindow, store: &Store) {
+    for (action, key, default) in SHORTCUTS {
+        let value = shortcut_value(store, key, default);
+        match action {
+            "next" => ui.set_shortcut_next(value.into()),
+            "prev" => ui.set_shortcut_prev(value.into()),
+            "read" => ui.set_shortcut_read(value.into()),
+            "star" => ui.set_shortcut_star(value.into()),
+            "open" => ui.set_shortcut_open(value.into()),
+            _ => {}
+        }
+    }
+}
+
+fn set_shortcut(store: &Store, ui: &MainWindow, action: &str, raw_value: &str) {
+    let Some(index) = SHORTCUTS.iter().position(|(name, _, _)| *name == action) else {
+        return;
+    };
+    let Some(value) = normalize_shortcut(raw_value) else {
+        ui.set_shortcuts_status("Use a single printable key (not ?).".into());
+        apply_shortcuts(ui, store);
+        return;
+    };
+
+    let values: Vec<String> = SHORTCUTS
+        .iter()
+        .map(|(_, key, default)| shortcut_value(store, key, default))
+        .collect();
+    if values
+        .iter()
+        .enumerate()
+        .any(|(other, existing)| other != index && existing == &value)
+    {
+        ui.set_shortcuts_status("That key is already in use.".into());
+        apply_shortcuts(ui, store);
+        return;
+    }
+
+    match store.set_state(SHORTCUTS[index].1, &value) {
+        Ok(()) => {
+            apply_shortcuts(ui, store);
+            ui.set_shortcuts_status("".into());
+        }
+        Err(error) => {
+            ui.set_shortcuts_status(format!("Could not save shortcut: {error}").into());
+            apply_shortcuts(ui, store);
+        }
     }
 }
 
@@ -1798,6 +1898,21 @@ mod article_model_tests {
         assert!(model.row_data(0).unwrap().read);
         assert_eq!(model.row_data(0).unwrap().id, "a");
         assert_eq!(model.row_data(1).unwrap().id, "c");
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_editable_shortcuts() {
+        assert_eq!(normalize_shortcut("J"), Some("j".into()));
+        assert_eq!(normalize_shortcut(","), Some(",".into()));
+        assert_eq!(normalize_shortcut("jk"), None);
+        assert_eq!(normalize_shortcut("?"), None);
+        assert_eq!(normalize_shortcut(" "), None);
+        assert_eq!(normalize_shortcut("é"), None);
     }
 }
 
