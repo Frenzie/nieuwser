@@ -38,6 +38,8 @@ const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
 const READER_CACHE_LIMIT: usize = 24;
+const MIN_WINDOW_WIDTH: f32 = 560.0;
+const MIN_WINDOW_HEIGHT: f32 = 480.0;
 
 static IMAGE_FETCH_SLOTS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(4));
@@ -61,6 +63,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?;
     let ui = MainWindow::new()?;
+    apply_window_geometry(&store, &ui);
     ui.set_feed_width(saved_length(&store, "feed_width", 260.0).max(160.0));
     ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
@@ -76,6 +79,17 @@ fn main() -> Result<()> {
     refresh_feeds(&ui, &store, &state)?;
     load_stream(&ui, &store, &state, 0)?;
     bind_callbacks(&ui, &store, &state, &runtime);
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.window().on_close_requested(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                save_window_geometry(&store, ui.window());
+            }
+            slint::CloseRequestResponse::HideWindow
+        });
+    }
 
     if let Some((base, email)) = store.account()? {
         ui.set_settings_url(base.into());
@@ -574,6 +588,44 @@ fn saved_length(store: &Store, key: &str, default: f32) -> f32 {
         .and_then(|value| value.parse().ok())
         .filter(|value: &f32| value.is_finite())
         .unwrap_or(default)
+}
+
+fn saved_i32(store: &Store, key: &str) -> Option<i32> {
+    store.state(key).ok().flatten()?.parse().ok()
+}
+
+// Wayland does not expose window positions; saving the fallback (0, 0) would move the next
+// X11 launch to the top-left corner.
+fn wayland_position_unavailable() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+fn apply_window_geometry(store: &Store, ui: &MainWindow) {
+    let width = saved_length(store, "window_width", 0.0);
+    let height = saved_length(store, "window_height", 0.0);
+    if width >= MIN_WINDOW_WIDTH && height >= MIN_WINDOW_HEIGHT {
+        ui.window().set_size(slint::PhysicalSize::new(
+            width.round() as u32,
+            height.round() as u32,
+        ));
+    }
+
+    if !wayland_position_unavailable()
+        && let (Some(x), Some(y)) = (saved_i32(store, "window_x"), saved_i32(store, "window_y"))
+    {
+        ui.window().set_position(slint::PhysicalPosition::new(x, y));
+    }
+}
+
+fn save_window_geometry(store: &Store, window: &slint::Window) {
+    let size = window.size();
+    let _ = store.set_state("window_width", &size.width.to_string());
+    let _ = store.set_state("window_height", &size.height.to_string());
+    if !wayland_position_unavailable() {
+        let position = window.position();
+        let _ = store.set_state("window_x", &position.x.to_string());
+        let _ = store.set_state("window_y", &position.y.to_string());
+    }
 }
 
 fn save_pane_widths(store: &Store, feed_width: f32, list_width: f32) {

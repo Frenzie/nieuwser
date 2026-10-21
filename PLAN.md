@@ -90,7 +90,9 @@ back button. Escape closes the drawer or returns from the reader to the list. Th
 loads 300 items at a time with a "Load more" button; empty states and a minimum window size keep
 the layout usable. The list reconciles rows by article ID instead of replacing the model,
 preserving scroll/selection across refreshes; the active row is kept in view when moving with
-`j`/`k`. Feed unread counts are right-aligned in a fixed-width column.
+`j`/`k`. Feed unread counts are right-aligned in a fixed-width column. Window size and
+position are stored in SQLite and restored on launch; Wayland position saves are skipped
+because that compositor does not expose them.
 
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links. The reader
 is a virtualized `ListView`; title/meta rows are part of the model, and a skeleton covers the
