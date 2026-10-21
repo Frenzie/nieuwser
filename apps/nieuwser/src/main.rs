@@ -45,6 +45,7 @@ thread_local! {
 }
 
 fn main() -> Result<()> {
+    configure_emoji_font()?;
     let db_path = db_path();
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -1570,6 +1571,21 @@ fn relative_time(secs: i64) -> String {
     } else {
         format!("{}d", delta / 86_400)
     }
+}
+
+fn configure_emoji_font() -> Result<()> {
+    use slint::fontique_011::fontique::{Blob, GenericFamily};
+
+    const NOTO_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-VariableFont_wght.ttf");
+
+    let mut fonts = slint::fontique_011::shared_collection();
+    let family = fonts
+        .register_fonts(Blob::new(Arc::new(NOTO_EMOJI)), None)
+        .first()
+        .map(|(family, _)| *family)
+        .ok_or_else(|| anyhow::anyhow!("bundled Noto Emoji font is invalid"))?;
+    fonts.set_generic_families(GenericFamily::Emoji, std::iter::once(family));
+    Ok(())
 }
 
 fn db_path() -> PathBuf {
