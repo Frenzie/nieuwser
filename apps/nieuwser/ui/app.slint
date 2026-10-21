@@ -457,6 +457,7 @@ export component MainWindow inherits Window {
 
                                 VerticalLayout {
                                     alignment: center;
+                                    horizontal-stretch: 1;
                                     Text {
                                         text: feed.title;
                                         overflow: elide;
@@ -472,8 +473,10 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: feed.unread > 0 ? "(" + feed.unread + ")" : "";
+                                    width: 42px;
                                     color: Theme.accent;
                                     font-size: 11px;
+                                    horizontal-alignment: right;
                                     vertical-alignment: center;
                                 }
                             }
