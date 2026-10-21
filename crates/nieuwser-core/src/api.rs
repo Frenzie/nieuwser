@@ -6,7 +6,7 @@ use url::Url;
 use crate::models::{
     Item, ItemRefs, StreamContents, Subscription, SubscriptionList, Tag, TagList, UnreadCounts,
 };
-use crate::{Error, Result};
+use crate::{Error, Result, http_body};
 
 /// Turns a server or API URL into the greader API base.
 pub fn normalize_api_url(input: &str) -> Result<String> {
@@ -22,6 +22,11 @@ pub fn normalize_api_url(input: &str) -> Result<String> {
     Url::parse(&base)?;
     Ok(base)
 }
+
+const MAX_LOGIN_BYTES: usize = 1024 * 1024;
+const MAX_TOKEN_BYTES: usize = 64 * 1024;
+const MAX_WRITE_BYTES: usize = 1024 * 1024;
+const MAX_API_BYTES: usize = 32 * 1024 * 1024;
 
 pub struct Client {
     http: HttpClient,
@@ -47,15 +52,23 @@ impl Client {
             .send()
             .await?;
         let status = response.status();
-        let body = response.text().await?;
+        let body = http_body::text(response, MAX_LOGIN_BYTES, "login response").await?;
         if !status.is_success() {
-            return Err(Error::Http { status, body });
+            return Err(Error::Http {
+                status,
+                body: clip(&body, 500),
+            });
         }
         let auth = body
             .lines()
             .find_map(|line| line.trim().strip_prefix("Auth="))
             .map(str::to_string)
-            .ok_or_else(|| Error::Other(format!("no Auth token in login response: {body}")))?;
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "no Auth token in login response: {}",
+                    clip(&body, 500)
+                ))
+            })?;
 
         Ok(Self {
             http,
@@ -110,9 +123,12 @@ impl Client {
             .send()
             .await?;
         let status = response.status();
-        let body = response.text().await?;
+        let body = http_body::text(response, MAX_API_BYTES, "greader response").await?;
         if !status.is_success() {
-            return Err(Error::Http { status, body });
+            return Err(Error::Http {
+                status,
+                body: clip(&body, 500),
+            });
         }
         serde_json::from_str(&body).map_err(|e| {
             Error::Other(format!(
@@ -133,9 +149,12 @@ impl Client {
             .send()
             .await?;
         let status = response.status();
-        let body = response.text().await?;
+        let body = http_body::text(response, MAX_TOKEN_BYTES, "CSRF token response").await?;
         if !status.is_success() {
-            return Err(Error::Http { status, body });
+            return Err(Error::Http {
+                status,
+                body: clip(&body, 500),
+            });
         }
         let token = body.trim().to_string();
         if token.is_empty() {
@@ -164,7 +183,7 @@ impl Client {
                 .send()
                 .await?;
             let status = response.status();
-            let text = response.text().await?;
+            let text = http_body::text(response, MAX_WRITE_BYTES, "write response").await?;
 
             if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
                 self.token = None;
@@ -173,7 +192,10 @@ impl Client {
                 }
             }
             if !status.is_success() {
-                return Err(Error::Http { status, body: text });
+                return Err(Error::Http {
+                    status,
+                    body: clip(&text, 500),
+                });
             }
             return Ok(text);
         }
@@ -259,9 +281,12 @@ impl Client {
             .send()
             .await?;
         let status = response.status();
-        let text = response.text().await?;
+        let text = http_body::text(response, MAX_API_BYTES, "item contents response").await?;
         if !status.is_success() {
-            return Err(Error::Http { status, body: text });
+            return Err(Error::Http {
+                status,
+                body: clip(&text, 500),
+            });
         }
         let contents: StreamContents = serde_json::from_str(&text).map_err(|e| {
             Error::Other(format!(
