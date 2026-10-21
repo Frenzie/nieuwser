@@ -749,7 +749,8 @@ fn load_stream(
     ui.set_article_index(-1);
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
-    ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+    let rows = make_reader_rows("", "", Vec::new());
+    ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
     ui.set_reader_loading(false);
     Ok(())
 }
@@ -939,7 +940,8 @@ fn select_article(
     if needs_fetch {
         if allow_fetch {
             ui.set_reader_loading(true);
-            ui.set_reader_blocks(ModelRc::new(VecModel::from(Vec::<ReaderBlock>::new())));
+            let rows = make_reader_rows(&title, &meta, Vec::new());
+            ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
         } else {
             set_reader_message(ui, "No cached content.");
         }
@@ -963,6 +965,7 @@ fn select_article(
         if rows.is_empty() {
             set_reader_message(ui, "No readable content in this article.");
         } else {
+            let rows = make_reader_rows(&title, &meta, rows);
             let blocks = ModelRc::new(VecModel::from(rows));
             ui.set_reader_blocks(blocks.clone());
             ui.set_reader_loading(false);
@@ -1162,6 +1165,36 @@ fn spawn_reader_images(
     }
 }
 
+fn text_reader_block(kind: &str, text: &str) -> ReaderBlock {
+    ReaderBlock {
+        kind: kind.into(),
+        label: text.into(),
+        text: StyledText::default(),
+        chunks: ModelRc::new(VecModel::from(Vec::<StyledText>::new())),
+        indent: 0,
+        source: "".into(),
+        image: slint::Image::default(),
+        has_image: false,
+    }
+}
+
+fn make_reader_rows(title: &str, meta: &str, content: Vec<ReaderBlock>) -> Vec<ReaderBlock> {
+    let mut rows = Vec::with_capacity(content.len() + 3);
+    if title.is_empty() {
+        if content.is_empty() {
+            rows.push(text_reader_block("empty", "Select an article to read."));
+        }
+    } else {
+        rows.push(text_reader_block("title", title));
+        if !meta.is_empty() {
+            rows.push(text_reader_block("meta", meta));
+        }
+        rows.push(text_reader_block("rule", ""));
+    }
+    rows.extend(content);
+    rows
+}
+
 fn set_reader_message(ui: &MainWindow, message: &str) {
     let block = ReaderBlock {
         kind: "p".into(),
@@ -1173,7 +1206,12 @@ fn set_reader_message(ui: &MainWindow, message: &str) {
         image: slint::Image::default(),
         has_image: false,
     };
-    ui.set_reader_blocks(ModelRc::new(VecModel::from(vec![block])));
+    let rows = make_reader_rows(
+        ui.get_reader_title().as_str(),
+        ui.get_reader_meta().as_str(),
+        vec![block],
+    );
+    ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
     ui.set_reader_loading(false);
 }
 

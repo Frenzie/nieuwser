@@ -700,42 +700,39 @@ export component MainWindow inherits Window {
                     reader-frame := Rectangle {
                         clip: true;
 
-                        reader-scroll := ScrollView {
-                            VerticalLayout {
-                                spacing: 12px;
+                        reader-scroll := ListView {
+                            for block in root.reader-blocks : VerticalLayout {
+                                spacing: 4px;
+                                padding-bottom: 8px;
 
-                                Text {
-                                    text: root.reader-title;
+                                if block.kind == "title" : Text {
+                                    text: block.label;
                                     font-size: 24px;
                                     font-weight: 700;
                                     wrap: word-wrap;
+                                    width: reader-scroll.visible-width;
                                 }
 
-                                Text {
-                                    text: root.reader-meta;
+                                if block.kind == "meta" : Text {
+                                    text: block.label;
                                     color: Theme.text-muted;
                                     font-size: 12px;
                                     wrap: word-wrap;
+                                    width: reader-scroll.visible-width;
                                 }
 
-                                if root.reader-title == "" : Text {
-                                    text: "Select an article to read.";
+                                if block.kind == "empty" : Text {
+                                    text: block.label;
                                     color: Theme.text-faint;
                                     font-size: 13px;
+                                    wrap: word-wrap;
+                                    width: reader-scroll.visible-width;
                                 }
 
-                                Rectangle {
+                                if block.kind == "rule" : Rectangle {
                                     height: 1px;
                                     background: Theme.divider;
                                 }
-
-                                for block in root.reader-blocks : VerticalLayout {
-                                    spacing: 4px;
-
-                                    if block.kind == "rule" : Rectangle {
-                                        height: 1px;
-                                        background: Theme.divider;
-                                    }
 
                                 if block.kind == "image" : Rectangle {
                                     background: Theme.block;
@@ -790,7 +787,9 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
-                                if block.kind != "rule" && block.kind != "image" && block.kind != "code" && block.kind != "table" : HorizontalLayout {
+                                if block.kind != "rule" && block.kind != "image" && block.kind != "code"
+                                    && block.kind != "table" && block.kind != "title"
+                                    && block.kind != "meta" && block.kind != "empty" : HorizontalLayout {
                                     padding-left: block.indent * 18px;
                                     spacing: 8px;
 
@@ -827,7 +826,6 @@ export component MainWindow inherits Window {
                         }
                         if root.reader-loading : ReaderSkeleton { }
                     }
-                }
                 }
             }
         }
