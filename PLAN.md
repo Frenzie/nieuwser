@@ -3,13 +3,21 @@
 A native FreshRSS desktop client in Rust. Linux is the primary target; Windows and macOS
 must remain buildable. Slint is the UI toolkit for the prototype.
 
-Status: M0–M4 complete; M5 in progress (2026-10-18).
+Status: M0–M4 complete; M5 substantially complete (2026-10-21).
 
 ## Decisions
 
 - **UI:** Slint. The UI must stay replaceable, so all business logic lives in `nieuwser-core`.
 - **Article view:** block-level document IR (headings, paragraphs, lists, quotes, code, rules,
-  tables, images) rendered with native Slint widgets; inline links open externally. No embedded webview.
+  tables, images) rendered with native Slint widgets; inline links open externally. The reader is
+  a virtualized Slint `ListView`, with the title/meta as model rows so off-screen blocks are not
+  laid out. A skeleton covers loading, and Noto Emoji is bundled for consistent/fast emoji
+  fallback. No embedded webview or Blitz.
+- **Search:** SQLite FTS5 over title, author, summary, and content, using prefix terms with a
+  feed-title fallback. Existing rows are backfilled once on migration.
+- **Network safety:** HTTP response bodies are bounded. Remote images reject private, loopback,
+  link-local, and metadata addresses; resolve and pin public addresses; do not follow redirects;
+  enforce byte/pixel limits before decoding; and cap concurrent fetches.
 - **Sync:** FreshRSS Google Reader API (`/api/greader.php`), not Fever.
 - **Storage:** SQLite via `rusqlite`; metadata kept indefinitely, ~500 MB default budget for
   article bodies and media. Never evict unread/starred bodies. Oldest read/unstarred bodies are
@@ -17,6 +25,8 @@ Status: M0–M4 complete; M5 in progress (2026-10-18).
 - **Offline:** yes. Local changes are written to an outbox and replayed on the next sync.
 - **Auth:** the settings dialog exchanges the password for a FreshRSS auth token via ClientLogin.
   Only the token is stored locally; the password is never persisted.
+- **Release:** publishing a GitHub release, or running the Release workflow manually, builds
+  Linux, macOS, and Windows packages and creates/updates a draft release with `SHA256SUMS`.
 - **Scope:** single account, no feed management in the initial PoC.
 - **Figma:** Slint's one-way "Figma to Slint" importer; imported screens go in `ui/imported/`
   and are not hand-edited.
@@ -75,14 +85,36 @@ pulled from the server updates `items` without enqueueing.
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
 The article list loads 300 items at a time with a "Load more" button; empty states and a
-minimum window size keep the layout usable.
-Reader blocks use native `StyledText` with inline emphasis, code, and clickable links.
-Article images and feed icons are fetched on demand, cached in SQLite, and rendered natively;
-inline images are promoted out of paragraphs. Keyboard-first: `j` next
-article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read, `s` toggle star, `Esc` close settings.
+minimum window size keep the layout usable. The list reconciles rows by article ID instead of
+replacing the model, preserving scroll/selection across refreshes; the active row is kept in
+view when moving with `j`/`k`. Feed unread counts are right-aligned in a fixed-width column.
+
+Reader blocks use native `StyledText` with inline emphasis, code, and clickable links. The reader
+is a virtualized `ListView`; title/meta rows are part of the model, and a skeleton covers the
+loading gap. Noto Emoji is bundled and registered as Slint's emoji fallback. Article images and
+feed icons are fetched on demand, cached in SQLite, rendered natively, and loaded with bounded
+concurrency; inline images are promoted out of paragraphs.
+
+Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read,
+`s` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings.
+Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
+also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
-Light/dark theme is stored locally and
-also switches the standard Slint widget palette.
+Light/dark theme is stored locally and also switches the standard Slint widget palette.
+
+## Release
+
+`.github/workflows/release.yml` runs on a published GitHub release or manual dispatch. It builds:
+
+- Linux x86_64/aarch64: AppImage, `.deb`, `.tar.gz`
+- macOS universal: `.dmg` and CLI `.zip` (ad-hoc signed)
+- Windows x64: `.msi` and portable `.zip` (unsigned)
+- `SHA256SUMS.txt` on a draft GitHub release
+
+Linux packaging bundles the dynamically loaded xkbcommon libraries, supports
+`AppImage --integrate`, and produces reproducible `.tar.gz`/`.deb` files. CI smoke-tests the
+AppImage under Xvfb, runs clippy, formatting, and the full test suite. macOS/Windows packaging
+paths exist but have not yet been exercised by a GitHub release run.
 
 ## Milestones
 
@@ -91,7 +123,8 @@ also switches the standard Slint widget palette.
 - **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(done)*
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(done)*
 - **M4 — content:** reader document IR, image cache, feed icons. *(done)*
-- **M5 — hardening:** large accounts, retries, packaging. *(in progress)*
+- **M5 — hardening:** large accounts, retries, packaging. *(packaging, search, security, and
+  reader performance done; stress/retry validation remains)*
 
 ## Current status
 
@@ -99,27 +132,47 @@ Working today:
 
 - `nieuwser-core`: greader auth, CSRF token, subscriptions/tags/unread counts, stream
   contents, item IDs/contents, edit-tag, mark-all-as-read, incremental pagination, outbox replay,
-  unread/starred reconciliation.
+  unread/starred reconciliation, and bounded HTTP response reads.
 - SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries,
-  cached media, and a shared byte budget for bodies and media.
+  cached media, a shared byte budget for bodies and media, and an FTS5 article index.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
 - Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
-  navigation, local search, feed selection, paginated article list, rich block-based reader with
-  clickable links, cached feed icons, article images, and embedded data images, persisted light/dark theme,
-  read/star/mark-all actions, manual refresh that preserves the open article.
-- Tests: 20 core tests covering API parsing/auth, reader blocks, storage/migration,
-  reconciliation, search, cache eviction, and a mocked end-to-end sync.
+  navigation, local search, feed selection, paginated article list, virtualized rich reader,
+  loading skeleton, bundled emoji fallback, cached feed icons and article images, persisted
+  light/dark theme, read/star/mark-all actions, manual refresh that preserves the open article,
+  and browser opening from the reader toolbar, keyboard, double-click, and middle-click.
+- Tests: 24 core tests plus 2 app tests, covering API parsing/auth, reader blocks,
+  storage/migration, FTS search/backfill, reconciliation, cache eviction, image URL safety,
+  HTTP body limits, a mocked end-to-end sync, article-list reveal, and long-reader rendering.
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  pass. GitHub CI runs the test matrix, formatting, and clippy.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
   reports 0 new items; mark read/unread and star/unstar round-trip; onboarding, token reuse on
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
   read-on-open, keyboard navigation, local search, on-demand article restore after cache
   eviction, rich rendering of headings, lists, links, tables, images, and cached feed icons.
+- Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
+  xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
+
+Recent changes (2026-10-21):
+
+- Replaced the all-at-once reader with a virtualized `ListView`, added a loading skeleton, and
+  registered bundled Noto Emoji as the fallback font.
+- Added FTS5 search with one-time indexing of existing articles.
+- Bounded HTTP bodies and hardened remote image fetching against SSRF, redirects, oversized
+  images, and decode bombs; capped concurrent image fetches.
+- Preserved article-list identity across refreshes, kept the active row visible on `j`/`k`, and
+  right-aligned feed unread counts.
+- Added the browser icon/button, `o`/`Ctrl+O`, and double/middle-click article opening.
+- Added the release workflow, reproducible Linux packaging, AppImage integration/smoke test,
+  and clippy in CI.
 
 Next up:
 
-1. Layout polish for narrow windows and resizable panes.
-2. Packaging and cross-platform checks.
+1. Finish M5: large-account/soak testing, retry/offline edge cases, and an end-to-end release run.
+2. Exercise macOS and Windows packaging in CI.
+3. Layout polish for narrow windows and resizable panes.
 
 
 ## How to run
@@ -151,5 +204,6 @@ cargo run -p nieuwser
 ## Open questions
 
 - Final app name and license.
-- Whether to add a webview for full HTML fidelity after v1.
+- Whether to add an optional Blitz/HTML renderer for full fidelity after v1; the block reader
+  remains the default and Blitz is explicitly out of scope for now.
 - Multi-account and feed management timing.
