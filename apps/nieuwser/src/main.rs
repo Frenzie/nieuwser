@@ -787,22 +787,77 @@ fn push_articles(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
         let state = state.lock().unwrap();
         article_rows(&state.items, &state.selected)
     };
-    ui.set_articles(ModelRc::new(VecModel::from(rows)));
+    reconcile_articles(ui, rows);
 }
 
-// Update only rows whose flags changed instead of replacing the model.
 fn sync_article_rows(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
-    let state = state.lock().unwrap();
+    let rows = {
+        let state = state.lock().unwrap();
+        article_rows(&state.items, &state.selected)
+    };
+    reconcile_articles(ui, rows);
+}
+
+fn reconcile_articles(ui: &MainWindow, rows: Vec<ArticleRow>) {
     let model = ui.get_articles();
-    for (index, item) in state.items.iter().enumerate() {
-        let selected = state.selected.contains(&item.id);
-        let Some(old) = model.row_data(index) else {
-            break;
-        };
-        if old.read != item.read || old.starred != item.starred || old.selected != selected {
-            model.set_row_data(index, article_row(item, selected));
+    if let Some(model) = model.as_any().downcast_ref::<VecModel<ArticleRow>>() {
+        reconcile_article_model(model, rows);
+    } else {
+        ui.set_articles(ModelRc::new(VecModel::from(rows)));
+    }
+}
+
+fn reconcile_article_model(model: &VecModel<ArticleRow>, rows: Vec<ArticleRow>) {
+    let old_len = model.row_count();
+    let overlap = old_len.min(rows.len());
+    let prefix = (0..overlap)
+        .take_while(|&index| {
+            model
+                .row_data(index)
+                .is_some_and(|old| old.id == rows[index].id)
+        })
+        .count();
+    let suffix = (0..overlap - prefix)
+        .take_while(|&offset| {
+            let old_index = old_len - 1 - offset;
+            let new_index = rows.len() - 1 - offset;
+            model
+                .row_data(old_index)
+                .is_some_and(|old| old.id == rows[new_index].id)
+        })
+        .count();
+
+    for index in (prefix..old_len - suffix).rev() {
+        model.remove(index);
+    }
+    for (offset, row) in rows[prefix..rows.len() - suffix]
+        .iter()
+        .cloned()
+        .enumerate()
+    {
+        model.insert(prefix + offset, row);
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if index >= prefix && index < rows.len() - suffix {
+            continue;
+        }
+        if model
+            .row_data(index)
+            .is_none_or(|old| !same_article_row(&old, row))
+        {
+            model.set_row_data(index, row.clone());
         }
     }
+}
+
+fn same_article_row(a: &ArticleRow, b: &ArticleRow) -> bool {
+    a.id == b.id
+        && a.title == b.title
+        && a.feed == b.feed
+        && a.time == b.time
+        && a.read == b.read
+        && a.starred == b.starred
+        && a.selected == b.selected
 }
 
 // Keep feed and "All items" unread badges in sync without re-reading feeds.
@@ -1644,4 +1699,38 @@ fn db_path() -> PathBuf {
     directories::ProjectDirs::from("", "", "nieuwser")
         .map(|dirs| dirs.data_dir().join("nieuwser.db"))
         .unwrap_or_else(|| PathBuf::from("nieuwser.db"))
+}
+
+#[cfg(test)]
+mod article_model_tests {
+    use super::*;
+
+    fn article(id: &str) -> ArticleRow {
+        ArticleRow {
+            id: id.into(),
+            title: format!("Article {id}").into(),
+            feed: "Feed".into(),
+            time: "now".into(),
+            read: false,
+            starred: false,
+            selected: false,
+        }
+    }
+
+    #[test]
+    fn reconciles_insertions_removals_and_updates_in_place() {
+        let model = VecModel::from(vec![article("a"), article("b"), article("c")]);
+        reconcile_article_model(&model, vec![article("a"), article("c"), article("d")]);
+        assert_eq!(model.row_count(), 3);
+        assert_eq!(model.row_data(0).unwrap().id, "a");
+        assert_eq!(model.row_data(1).unwrap().id, "c");
+        assert_eq!(model.row_data(2).unwrap().id, "d");
+
+        let mut changed = article("a");
+        changed.read = true;
+        reconcile_article_model(&model, vec![changed.clone(), article("c"), article("d")]);
+        assert!(model.row_data(0).unwrap().read);
+        assert_eq!(model.row_data(0).unwrap().id, "a");
+        assert_eq!(model.row_data(1).unwrap().id, "c");
+    }
 }
