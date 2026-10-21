@@ -126,6 +126,37 @@ component MenuButton inherits Rectangle {
     }
 }
 
+component ToolbarIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    background: root.enabled && touch.has-hover ? Theme.block : transparent;
+    opacity: root.enabled ? 1 : 0.4;
+
+    Image {
+        source: root.icon;
+        width: 18px;
+        height: 18px;
+        image-fit: contain;
+        colorize: Theme.text-muted;
+    }
+
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: root.label;
+        clicked => { root.clicked(); }
+    }
+}
+
 component SelectionContext inherits ContextMenuArea {
     in property <bool> has-selection;
     callback open-requested();
@@ -317,6 +348,9 @@ export component MainWindow inherits Window {
                 accept
             } else if (event.text == Key.UpArrow) {
                 root.scroll-reader(64px);
+                accept
+            } else if (event.text == "o" && !event.modifiers.alt && !event.modifiers.meta) {
+                root.open-selection();
                 accept
             } else if (event.text == "j" && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta) {
                 root.next-article();
@@ -630,10 +664,16 @@ export component MainWindow inherits Window {
                                 width: parent.width;
                                 height: parent.height;
                                 enabled: !root.settings-open;
+                                double-clicked => {
+                                    root.open-selection();
+                                }
                                 pointer-event(event) => {
                                     if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
                                         root.context-article(i);
                                         root.open-menu(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                    } else if (event.button == PointerEventButton.middle && event.kind == PointerEventKind.down) {
+                                        root.select-article(i, false, false);
+                                        root.open-selection();
                                     } else if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) {
                                         root.select-article(i, event.modifiers.control, event.modifiers.shift);
                                     }
@@ -696,6 +736,14 @@ export component MainWindow inherits Window {
                             color: Theme.text-muted;
                             horizontal-stretch: 1;
                             vertical-alignment: center;
+                        }
+                        ToolbarIconButton {
+                            icon: @image-url("icons/open-browser.svg");
+                            label: "Open in browser";
+                            enabled: !root.settings-open && root.article-index >= 0;
+                            clicked => {
+                                root.open-selection();
+                            }
                         }
                         Button {
                             text: "Mark read";
