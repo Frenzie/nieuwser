@@ -43,8 +43,11 @@ static IMAGE_FETCH_SLOTS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(4));
 
 thread_local! {
+    // HashMap::new is not const on the supported Rust version.
+    #[allow(clippy::missing_const_for_thread_local)]
     static IMAGE_CACHE: RefCell<HashMap<(String, u32), slint::Image>> = RefCell::new(HashMap::new());
-    static READER_CACHE: RefCell<VecDeque<(String, ReaderView)>> = RefCell::new(VecDeque::new());
+    static READER_CACHE: RefCell<VecDeque<(String, ReaderView)>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 fn main() -> Result<()> {
@@ -116,10 +119,10 @@ fn main() -> Result<()> {
         slint::TimerMode::Repeated,
         Duration::from_secs(15 * 60),
         move || {
-            if let Some(ui) = timer_ui.upgrade() {
-                if !ui.get_settings_open() {
-                    start_sync_if_configured(&ui, &timer_store, &timer_state, &timer_handle);
-                }
+            if let Some(ui) = timer_ui.upgrade()
+                && !ui.get_settings_open()
+            {
+                start_sync_if_configured(&ui, &timer_store, &timer_state, &timer_handle);
             }
         },
     );
@@ -165,12 +168,12 @@ fn bind_callbacks(
     {
         let ui_weak = ui.as_weak();
         ui.on_close_settings(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                if ui.get_settings_has_account() {
-                    ui.set_settings_open(false);
-                    ui.set_settings_password("".into());
-                    ui.set_settings_status("".into());
-                }
+            if let Some(ui) = ui_weak.upgrade()
+                && ui.get_settings_has_account()
+            {
+                ui.set_settings_open(false);
+                ui.set_settings_password("".into());
+                ui.set_settings_status("".into());
             }
         });
     }
@@ -234,12 +237,11 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         ui.on_set_mark_read_on_open(move |value| {
-            if let Some(ui) = ui_weak.upgrade() {
-                if let Err(error) =
+            if let Some(ui) = ui_weak.upgrade()
+                && let Err(error) =
                     store.set_state("mark_read_on_open", if value { "1" } else { "0" })
-                {
-                    ui.set_status(format!("Settings failed: {error}").into());
-                }
+            {
+                ui.set_status(format!("Settings failed: {error}").into());
             }
         });
     }
@@ -248,12 +250,11 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         ui.on_set_mark_read_on_open_browser(move |value| {
-            if let Some(ui) = ui_weak.upgrade() {
-                if let Err(error) =
+            if let Some(ui) = ui_weak.upgrade()
+                && let Err(error) =
                     store.set_state("mark_read_on_open_browser", if value { "1" } else { "0" })
-                {
-                    ui.set_status(format!("Settings failed: {error}").into());
-                }
+            {
+                ui.set_status(format!("Settings failed: {error}").into());
             }
         });
     }
@@ -297,10 +298,10 @@ fn bind_callbacks(
     {
         let ui_weak = ui.as_weak();
         ui.on_open_link(move |link| {
-            if let Err(error) = open_external(link.as_str()) {
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_status(format!("Could not open link: {error}").into());
-                }
+            if let Err(error) = open_external(link.as_str())
+                && let Some(ui) = ui_weak.upgrade()
+            {
+                ui.set_status(format!("Could not open link: {error}").into());
             }
         });
     }
@@ -425,10 +426,10 @@ fn bind_callbacks(
         let store = store.clone();
         let state = state.clone();
         ui.on_load_more(move || {
-            if let Some(ui) = ui_weak.upgrade() {
-                if let Err(error) = load_more(&ui, &store, &state) {
-                    ui.set_status(format!("Could not load more articles: {error}").into());
-                }
+            if let Some(ui) = ui_weak.upgrade()
+                && let Err(error) = load_more(&ui, &store, &state)
+            {
+                ui.set_status(format!("Could not load more articles: {error}").into());
             }
         });
     }
@@ -618,10 +619,10 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
         let icon = icon_url
             .as_deref()
             .and_then(|url| cached_image(url, ICON_IMAGE_SIZE));
-        if icon.is_none() {
-            if let Some(url) = icon_url.as_deref() {
-                spawn_icon_fetch(ui, store, state, &feed.id, url);
-            }
+        if icon.is_none()
+            && let Some(url) = icon_url.as_deref()
+        {
+            spawn_icon_fetch(ui, store, state, &feed.id, url);
         }
         rows.push(FeedRow {
             id: feed.id.clone().into(),
@@ -1061,7 +1062,7 @@ fn select_article(
             let handle = state.lock().unwrap().handle.clone();
             handle.spawn(async move {
                 let result = match Client::with_auth(&base, token) {
-                    Ok(client) => client.item_contents(&[id.clone()]).await,
+                    Ok(client) => client.item_contents(std::slice::from_ref(&id)).await,
                     Err(error) => Err(error),
                 };
                 let _ = slint::invoke_from_event_loop(move || {
