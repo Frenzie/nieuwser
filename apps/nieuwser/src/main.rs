@@ -1788,7 +1788,9 @@ mod reader_layout_tests {
         ui.show().unwrap();
         slint::platform::update_timers_and_animations();
 
+        let started = std::time::Instant::now();
         let first = ui.window().take_snapshot().unwrap();
+        eprintln!("long reader first frame: {:?}", started.elapsed());
         ui.invoke_scroll_reader(-500.0);
         slint::platform::update_timers_and_animations();
         let second = ui.window().take_snapshot().unwrap();
