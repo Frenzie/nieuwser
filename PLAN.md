@@ -100,8 +100,8 @@ loading gap. Noto Emoji is bundled and registered as Slint's emoji fallback. Art
 feed icons are fetched on demand, cached in SQLite, rendered natively, and loaded with bounded
 concurrency; inline images are promoted out of paragraphs.
 
-Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read,
-`s` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
+Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
+`f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
 close the compact feed drawer, or return from the compact reader to the article list, and `?`
 opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
 bindings are stored in SQLite. Reader/navigation keys are fixed.

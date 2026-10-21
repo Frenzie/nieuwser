@@ -14,8 +14,9 @@ All business logic lives in a UI-agnostic core, so the Slint frontend can be rep
 - Remembers the window size and position between launches (position is skipped on Wayland).
 - SQLite cache with a ~500 MB budget for article bodies and media; unread/starred bodies are never evicted.
 - Local search, light/dark themes, and keyboard-first navigation (`j`/`k` for the next/previous
-  article, `↑`/`↓`/`PageUp`/`PageDown`/`Space`/`Home`/`End` to scroll the reader, `Esc` to close
-  settings or the feed drawer / return to the article list in compact mode, `?` for shortcut help).
+  article, `r`/`f` for read/star, `↑`/`↓`/`PageUp`/`PageDown`/`Space`/`Home`/`End` to scroll the
+  reader, `Esc` to close settings or the feed drawer / return to the article list in compact mode,
+  `?` for shortcut help).
 - Customizable command keys for next/previous, read, star, and open-in-browser via
   Settings → Keyboard shortcuts.
 - Resizable panes in the wide layout (drag the dividers) and right-click menus for feeds and

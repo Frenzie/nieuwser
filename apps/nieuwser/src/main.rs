@@ -43,8 +43,8 @@ const MIN_WINDOW_HEIGHT: f32 = 480.0;
 const SHORTCUTS: [(&str, &str, &str); 5] = [
     ("next", "shortcut_next", "j"),
     ("prev", "shortcut_prev", "k"),
-    ("read", "shortcut_read", "m"),
-    ("star", "shortcut_star", "s"),
+    ("read", "shortcut_read", "r"),
+    ("star", "shortcut_star", "f"),
     ("open", "shortcut_open", "o"),
 ];
 
@@ -1913,6 +1913,12 @@ mod shortcut_tests {
         assert_eq!(normalize_shortcut("?"), None);
         assert_eq!(normalize_shortcut(" "), None);
         assert_eq!(normalize_shortcut("é"), None);
+    }
+
+    #[test]
+    fn uses_freshrss_action_defaults_where_keys_do_not_conflict() {
+        let defaults: Vec<_> = SHORTCUTS.iter().map(|(_, _, default)| *default).collect();
+        assert_eq!(defaults, ["j", "k", "r", "f", "o"]);
     }
 }
 
