@@ -84,10 +84,13 @@ pulled from the server updates `items` without enqueueing.
 ## UI
 
 Adaptive three-pane layout: feed tree with unread counts, article list, reader pane.
-The article list loads 300 items at a time with a "Load more" button; empty states and a
-minimum window size keep the layout usable. The list reconciles rows by article ID instead of
-replacing the model, preserving scroll/selection across refreshes; the active row is kept in
-view when moving with `j`/`k`. Feed unread counts are right-aligned in a fixed-width column.
+Below 900 px the same panes switch to a single-pane layout: the article list and reader fill
+the window, the feed tree becomes a drawer opened from the list header, and the reader gets a
+back button. Escape closes the drawer or returns from the reader to the list. The article list
+loads 300 items at a time with a "Load more" button; empty states and a minimum window size keep
+the layout usable. The list reconciles rows by article ID instead of replacing the model,
+preserving scroll/selection across refreshes; the active row is kept in view when moving with
+`j`/`k`. Feed unread counts are right-aligned in a fixed-width column.
 
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links. The reader
 is a virtualized `ListView`; title/meta rows are part of the model, and a skeleton covers the
@@ -96,7 +99,8 @@ feed icons are fetched on demand, cached in SQLite, rendered natively, and loade
 concurrency; inline images are promoted out of paragraphs.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `m` toggle read,
-`s` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings.
+`s` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
+close the compact feed drawer, or return from the compact reader to the article list.
 Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
 also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
@@ -136,7 +140,8 @@ Working today:
 - SQLite store: feeds/folders/items/outbox/sync state, local read/star changes, queries,
   cached media, a shared byte budget for bodies and media, and an FTS5 article index.
 - `nieuwser-cli`: `sync`, `feeds`, `items`, `mark-read`, `mark-all-read`.
-- Slint app: three-pane shell, settings/onboarding dialog, stored auth token, background sync
+- Slint app: three-pane shell with a compact single-pane layout and feed drawer,
+  settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, feed selection, paginated article list, virtualized rich reader,
   loading skeleton, bundled emoji fallback, cached feed icons and article images, persisted
@@ -165,6 +170,8 @@ Recent changes (2026-10-21):
 - Preserved article-list identity across refreshes, kept the active row visible on `j`/`k`, and
   right-aligned feed unread counts.
 - Added the browser icon/button, `o`/`Ctrl+O`, and double/middle-click article opening.
+- Added a compact single-pane layout below 900 px, with a feed drawer, reader back button, and
+  Escape navigation.
 - Added the release workflow, reproducible Linux packaging, AppImage integration/smoke test,
   and clippy in CI.
 
@@ -172,7 +179,7 @@ Next up:
 
 1. Finish M5: large-account/soak testing, retry/offline edge cases, and an end-to-end release run.
 2. Exercise macOS and Windows packaging in CI.
-3. Layout polish for narrow windows and resizable panes.
+3. Platform-native styling, fonts, and menu integration.
 
 
 ## How to run
