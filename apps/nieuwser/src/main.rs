@@ -651,7 +651,15 @@ fn remember_image(url: &str, max_size: u32, image: slint::Image) -> slint::Image
 }
 
 fn decode_image(data: &[u8], max_size: u32) -> Option<(Vec<u8>, u32, u32)> {
-    let image = image::load_from_memory(data).ok()?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(nieuwser_core::media::MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(nieuwser_core::media::MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(nieuwser_core::media::MAX_IMAGE_PIXELS * 4);
+    reader.limits(limits);
+    let image = reader.decode().ok()?;
     let image = if image.width() > max_size || image.height() > max_size {
         image.resize(max_size, max_size, image::imageops::FilterType::Triangle)
     } else {
