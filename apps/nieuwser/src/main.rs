@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -38,6 +38,9 @@ const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
 const READER_CACHE_LIMIT: usize = 24;
+
+static IMAGE_FETCH_SLOTS: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(4));
 
 thread_local! {
     static IMAGE_CACHE: RefCell<HashMap<(String, u32), slint::Image>> = RefCell::new(HashMap::new());
@@ -1200,7 +1203,11 @@ fn spawn_reader_images(
         let state = state.clone();
         let handle = state.lock().unwrap().handle.clone();
         handle.spawn(async move {
-            let decoded = decoded_image(store, url.clone(), READER_IMAGE_SIZE).await;
+            let permit = IMAGE_FETCH_SLOTS.acquire().await;
+            let decoded = match permit {
+                Ok(_permit) => decoded_image(store, url.clone(), READER_IMAGE_SIZE).await,
+                Err(_) => None,
+            };
             let _ = slint::invoke_from_event_loop(move || {
                 state.lock().unwrap().pending_media.remove(&url);
                 let Some(ui) = ui_weak.upgrade() else { return };
