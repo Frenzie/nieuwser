@@ -128,6 +128,53 @@ Linux packaging bundles the dynamically loaded xkbcommon libraries, supports
 AppImage under Xvfb, runs clippy, formatting, and the full test suite. macOS/Windows packaging
 paths exist but have not yet been exercised by a GitHub release run.
 
+## Android (assessed, deferred)
+
+Status: not started; deferred on 2026-10-22. No Android SDK/NDK or Rust Android targets are
+installed in the dev environment, so this is an assessment from the code and Slint 1.18.1
+documentation, not a verified build.
+
+Feasible: Slint 1.18.1 supports Android through `backend-android-activity-06`. The app must be a
+`cdylib` exporting `android_main`, call `slint::android::init(app)`, target API 26+, and use the
+Skia renderer (the only Android renderer). `cargo apk` is the shortest build path.
+
+Already suitable:
+
+- `nieuwser-core` is UI-agnostic with no Linux-only dependencies. Bundled `rusqlite` keeps FTS5
+  available; `reqwest`/rustls already pulls the Android platform verifier; `tokio`, `image`, and
+  `scraper` cross-compile.
+- The compact single-pane layout already activates below 900 px.
+
+Blockers and required work:
+
+1. **`arboard` does not compile for Android.** It is only used for "copy selected links"
+   (`apps/nieuwser/src/main.rs:1928`). Make it non-Android and disable that action initially, or
+   add a JNI `ClipboardManager` helper.
+2. **Binary-only entry point.** `apps/nieuwser/src/main.rs:62` owns `main`. Add a library target
+   (`crate-type = ["cdylib", "rlib"]`), move startup into a shared `run()`, and export
+   `#[unsafe(no_mangle)] android_main` that calls `slint::android::init`.
+3. **Database path.** `directories::ProjectDirs` returns `None` on Android, leaving an unwritable
+   relative fallback (`apps/nieuwser/src/main.rs:1999`). Pass
+   `AndroidApp::internal_data_path()` into the app instead.
+4. **External links.** `open_external` spawns `xdg-open`/`open`/`cmd`
+   (`apps/nieuwser/src/main.rs:1584`); Android needs a JNI `ACTION_VIEW` intent.
+5. **Window constraints.** `min-width: 560px; min-height: 480px`
+   (`apps/nieuwser/ui/app.slint:442`) exceeds phone dimensions. Lower them or make them
+   desktop-only.
+6. **Manifest/config:** `INTERNET` permission, app ID, icon, and a cleartext-HTTP policy for
+   self-hosted FreshRSS servers (HTTPS needs none).
+7. **Background sync.** The 15-minute `slint::Timer` only runs while the activity is alive. Sync
+   on launch/resume first; real background sync needs WorkManager or a foreground service.
+
+Resume checklist: install the `aarch64-linux-android` (and optionally `x86_64-linux-android`)
+targets plus NDK/SDK/JDK; add the Slint feature and library target; gate `arboard`; pass the
+Android data path; add the link-opening JNI shim; relax the size constraints; build an APK; then
+add an Android job to CI.
+
+Effort estimate: a launching APK with the current UI is roughly half a day to a day once the SDK
+is installed; a usable mobile build is a few days; production background sync, signing, lifecycle
+handling, and device testing are materially more.
+
 ## Milestones
 
 - **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
@@ -228,3 +275,5 @@ cargo run -p nieuwser
 - Whether to add an optional Blitz/HTML renderer for full fidelity after v1; the block reader
   remains the default and Blitz is explicitly out of scope for now.
 - Multi-account and feed management timing.
+- Android support: assessed as feasible but deferred; see the Android section for blockers and a
+  resume checklist. Decide whether to pursue it after M5.
