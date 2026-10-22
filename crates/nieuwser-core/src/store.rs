@@ -187,8 +187,14 @@ impl Store {
                 INSERT INTO items_fts(items_fts, rowid, title, author, summary_html, content_html)
                 VALUES ('delete', old.rowid, old.title, old.author, old.summary_html, old.content_html);
             END;
-            CREATE TRIGGER IF NOT EXISTS items_fts_au
-                AFTER UPDATE OF title, author, summary_html, content_html ON items BEGIN
+            DROP TRIGGER IF EXISTS items_fts_au;
+            CREATE TRIGGER items_fts_au
+                AFTER UPDATE OF title, author, summary_html, content_html ON items
+                WHEN old.title IS NOT new.title
+                  OR old.author IS NOT new.author
+                  OR old.summary_html IS NOT new.summary_html
+                  OR old.content_html IS NOT new.content_html
+            BEGIN
                 INSERT INTO items_fts(items_fts, rowid, title, author, summary_html, content_html)
                 VALUES ('delete', old.rowid, old.title, old.author, old.summary_html, old.content_html);
                 INSERT INTO items_fts(rowid, title, author, summary_html, content_html)
