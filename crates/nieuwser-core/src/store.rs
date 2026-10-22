@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_iter};
 
 use crate::Result;
 use crate::models::{Item, Stream, Subscription, Tag, UnreadCount};
@@ -845,26 +845,17 @@ impl Store {
     pub fn reconcile_read_state(&self, remote_unread: &HashSet<String>) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        tx.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS remote_ids (id TEXT PRIMARY KEY);
-             DELETE FROM remote_ids;",
-        )?;
-        for id in remote_unread {
-            tx.execute(
-                "INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)",
-                params![id],
-            )?;
-        }
+        fill_remote_ids(&tx, remote_unread)?;
         tx.execute(
             "UPDATE items SET read = 1 WHERE read = 0
              AND id NOT IN (SELECT id FROM remote_ids)
-             AND CAST(timestamp_usec AS TEXT) NOT IN (SELECT id FROM remote_ids)",
+             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)",
             [],
         )?;
         tx.execute(
             "UPDATE items SET read = 0 WHERE read = 1
              AND (id IN (SELECT id FROM remote_ids)
-                  OR CAST(timestamp_usec AS TEXT) IN (SELECT id FROM remote_ids))",
+                  OR timestamp_usec IN (SELECT ts FROM remote_timestamps))",
             [],
         )?;
         tx.commit()?;
@@ -875,26 +866,17 @@ impl Store {
     pub fn reconcile_starred_state(&self, remote_starred: &HashSet<String>) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        tx.execute_batch(
-            "CREATE TEMP TABLE IF NOT EXISTS remote_ids (id TEXT PRIMARY KEY);
-             DELETE FROM remote_ids;",
-        )?;
-        for id in remote_starred {
-            tx.execute(
-                "INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)",
-                params![id],
-            )?;
-        }
+        fill_remote_ids(&tx, remote_starred)?;
         tx.execute(
             "UPDATE items SET starred = 0 WHERE starred = 1
              AND id NOT IN (SELECT id FROM remote_ids)
-             AND CAST(timestamp_usec AS TEXT) NOT IN (SELECT id FROM remote_ids)",
+             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)",
             [],
         )?;
         tx.execute(
             "UPDATE items SET starred = 1
              WHERE id IN (SELECT id FROM remote_ids)
-                OR CAST(timestamp_usec AS TEXT) IN (SELECT id FROM remote_ids)",
+                OR timestamp_usec IN (SELECT ts FROM remote_timestamps)",
             [],
         )?;
         tx.commit()?;
@@ -950,6 +932,31 @@ fn now() -> i64 {
 
 fn is_label(id: &str) -> bool {
     id.contains("/label/")
+}
+
+/// Loads remote IDs into temp tables keyed by both forms the API reports them in.
+fn fill_remote_ids(tx: &Transaction<'_>, ids: &HashSet<String>) -> Result<()> {
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS remote_ids (id TEXT PRIMARY KEY);
+         DELETE FROM remote_ids;
+         CREATE TEMP TABLE IF NOT EXISTS remote_timestamps (ts INTEGER PRIMARY KEY);
+         DELETE FROM remote_timestamps;",
+    )?;
+    for id in ids {
+        tx.execute(
+            "INSERT OR IGNORE INTO remote_ids(id) VALUES (?1)",
+            params![id],
+        )?;
+        // FreshRSS reports decimal entry IDs here; matching them as integers
+        // keeps the timestamp lookup indexed instead of scanning every item.
+        if let Ok(ts) = id.parse::<i64>() {
+            tx.execute(
+                "INSERT OR IGNORE INTO remote_timestamps(ts) VALUES (?1)",
+                params![ts],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn fts_query(input: &str) -> Option<String> {
