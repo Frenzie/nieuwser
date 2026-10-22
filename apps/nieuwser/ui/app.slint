@@ -157,6 +157,36 @@ component ToolbarIconButton inherits Rectangle {
     }
 }
 
+component FilterChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked;
+
+    width: 54px;
+    height: 30px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    background: root.selected ? Theme.article-selected : Theme.surface;
+
+    Text {
+        text: root.label;
+        color: root.selected ? Theme.accent : Theme.text-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: 12px;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: "Show " + root.label + " articles";
+        clicked => { root.clicked(); }
+    }
+}
+
 component ShortcutRow inherits Rectangle {
     in property <string> label;
     in property <string> key-text;
@@ -372,6 +402,7 @@ export component MainWindow inherits Window {
     in-out property <string> compact-page: "list";
     in-out property <bool> feed-drawer-open: false;
     private property <int> space-presses: 0;
+    private property <length> reader-swipe-offset: 0px;
     property <length> drag-start-x;
     property <length> drag-start-width;
     property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
@@ -464,6 +495,7 @@ export component MainWindow inherits Window {
     changed compact => {
         if (!root.compact) {
             root.feed-drawer-open = false;
+            root.reader-swipe-offset = 0px;
         }
     }
     changed article-index => { root.space-presses = 0; }
@@ -777,39 +809,30 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    LineEdit {
-                        placeholder-text: "Search articles…";
-                        enabled: !root.settings-open;
-                        text <=> root.search-query;
-                        edited => {
-                            root.search(root.search-query);
-                        }
-                    }
-
                     HorizontalLayout {
                         spacing: 6px;
-                        Text {
-                            text: "Show";
-                            color: Theme.text-muted;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                        }
-                        Button {
-                            text: "All";
-                            primary: root.article-filter == "all";
+                        LineEdit {
+                            placeholder-text: "Search articles…";
                             enabled: !root.settings-open;
+                            horizontal-stretch: 1;
+                            text <=> root.search-query;
+                            edited => {
+                                root.search(root.search-query);
+                            }
+                        }
+                        FilterChip {
+                            label: "All";
+                            selected: root.article-filter == "all";
                             clicked => { root.set-article-filter("all"); }
                         }
-                        Button {
-                            text: "Unread";
-                            primary: root.article-filter == "unread";
-                            enabled: !root.settings-open;
+                        FilterChip {
+                            label: "Unread";
+                            selected: root.article-filter == "unread";
                             clicked => { root.set-article-filter("unread"); }
                         }
-                        Button {
-                            text: "Read";
-                            primary: root.article-filter == "read";
-                            enabled: !root.settings-open;
+                        FilterChip {
+                            label: "Read";
+                            selected: root.article-filter == "read";
                             clicked => { root.set-article-filter("read"); }
                         }
                     }
@@ -933,6 +956,7 @@ export component MainWindow inherits Window {
                 x: root.compact ? 0px : root.feed-width + root.list-width + 14px;
                 width: root.compact ? parent.width : parent.width - root.feed-width - root.list-width - 14px;
                 height: parent.height;
+                clip: true;
                 background: Theme.surface;
 
                 SelectionContext {
@@ -948,16 +972,26 @@ export component MainWindow inherits Window {
                     height: parent.height;
                     handle-swipe-left: root.compact && root.article-index >= 0 && root.article-index + 1 < root.articles.length;
                     handle-swipe-right: root.compact && root.article-index > 0;
+                    moved => {
+                        if (self.swiping) {
+                            root.reader-swipe-offset = Math.max(0px - self.width / 3, Math.min(
+                                self.width / 3,
+                                self.current-position.x - self.pressed-position.x));
+                        }
+                    }
                     swiped => {
                         let dx = self.current-position.x - self.pressed-position.x;
+                        root.reader-swipe-offset = 0px;
                         if (dx < -80px) {
                             root.next-article();
                         } else if (dx > 80px) {
                             root.prev-article();
                         }
                     }
+                    cancelled => { root.reader-swipe-offset = 0px; }
 
                 VerticalLayout {
+                    x: root.reader-swipe-offset;
                     padding-top: 24px;
                     padding-bottom: 24px;
                     padding-left: 24px;
