@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -16,6 +16,22 @@ pub const MAX_IMAGE_PIXELS: u64 = 8 * 1024 * 1024;
 
 static REMOTE_CLIENTS: LazyLock<Mutex<HashMap<String, reqwest::Client>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// Enforcing the budget scans every body and media row, so don't do it after
+// every image; overshooting for a few images is harmless.
+static LAST_BUDGET_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
+const BUDGET_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+
+fn budget_check_due() -> bool {
+    let mut last = LAST_BUDGET_CHECK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let due = last.is_none_or(|last| last.elapsed() >= BUDGET_CHECK_INTERVAL);
+    if due {
+        *last = Some(Instant::now());
+    }
+    due
+}
 
 /// Returns an image from the local cache, downloading and caching it if needed.
 pub async fn fetch_image(store: &Store, url: &str) -> Result<Vec<u8>> {
@@ -63,7 +79,9 @@ pub async fn fetch_image(store: &Store, url: &str) -> Result<Vec<u8>> {
     let data = crate::http_body::bytes(&mut response, MAX_IMAGE_BYTES, "image response").await?;
 
     store.put_media(url, &data)?;
-    let _ = store.enforce_cache_budget(DEFAULT_CACHE_BYTES);
+    if budget_check_due() {
+        let _ = store.enforce_cache_budget(DEFAULT_CACHE_BYTES);
+    }
     Ok(data)
 }
 
