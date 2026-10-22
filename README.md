@@ -7,7 +7,8 @@ All business logic lives in a UI-agnostic core, so the Slint frontend can be rep
 ## Features
 
 - Three-pane reader: feed tree, article list, block-based reader view (no webview).
-  Below 900 px it becomes a single-pane list/reader layout with a feed drawer.
+  Below 900 px it becomes a single-pane list/reader layout with a feed drawer. The article list
+  can show all, unread, or read articles.
 - Sync via the FreshRSS Google Reader API (`/api/greader.php`), including offline writes
   queued in an outbox and replayed on the next sync.
 - Token-based auth: the password is exchanged for an auth token and never stored.
@@ -16,7 +17,8 @@ All business logic lives in a UI-agnostic core, so the Slint frontend can be rep
 - Local search, light/dark themes, and keyboard-first navigation (`j`/`k` for the next/previous
   article, `r`/`f` for read/star, `↑`/`↓`/`PageUp`/`PageDown`/`Space`/`Home`/`End` to scroll the
   reader, `Esc` to close settings or the feed drawer / return to the article list in compact mode,
-  `?` for shortcut help).
+  `?` for shortcut help). In the compact reader, swipe left/right or press Space three times to
+  switch articles.
 - Customizable command keys for next/previous, read, star, and open-in-browser via
   Settings → Keyboard shortcuts.
 - Resizable panes in the wide layout (drag the dividers) and right-click menus for feeds and

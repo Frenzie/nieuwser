@@ -497,10 +497,25 @@ impl Store {
         unread_only: bool,
         search: Option<&str>,
     ) -> Result<Vec<ItemSummary>> {
+        self.items_filtered(stream, limit, offset, unread_only.then_some(false), search)
+    }
+
+    pub fn items_filtered(
+        &self,
+        stream: &Stream,
+        limit: i64,
+        offset: i64,
+        read: Option<bool>,
+        search: Option<&str>,
+    ) -> Result<Vec<ItemSummary>> {
         let (filter, mut values) = stream_where(stream);
         let mut clauses = vec![filter];
-        if unread_only {
-            clauses.push("items.read = 0".into());
+        if let Some(read) = read {
+            clauses.push(if read {
+                "items.read = 1".into()
+            } else {
+                "items.read = 0".into()
+            });
         }
         if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
             let pattern = format!("%{}%", term.trim());
@@ -1026,9 +1041,35 @@ mod tests {
         let items = store.items(&Stream::All, 10, 0, false, None).unwrap();
         assert_eq!(items.len(), 1);
         assert!(!items[0].read);
+        assert_eq!(
+            store
+                .items_filtered(&Stream::All, 10, 0, Some(false), None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .items_filtered(&Stream::All, 10, 0, Some(true), None)
+                .unwrap()
+                .is_empty()
+        );
 
         store.set_read(&["1".into()], true).unwrap();
         assert!(store.items(&Stream::All, 10, 0, false, None).unwrap()[0].read);
+        assert!(
+            store
+                .items_filtered(&Stream::All, 10, 0, Some(false), None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .items_filtered(&Stream::All, 10, 0, Some(true), None)
+                .unwrap()
+                .len(),
+            1
+        );
         let ops = store.outbox(10).unwrap();
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].op, "read");

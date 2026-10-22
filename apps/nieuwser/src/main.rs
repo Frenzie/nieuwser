@@ -72,6 +72,7 @@ fn main() -> Result<()> {
     let ui = MainWindow::new()?;
     apply_window_geometry(&store, &ui);
     apply_shortcuts(&ui, &store);
+    ui.set_article_filter(saved_article_filter(&store).into());
     ui.set_feed_width(saved_length(&store, "feed_width", 260.0).max(160.0));
     ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
@@ -315,6 +316,37 @@ fn bind_callbacks(
                 }
                 apply_shortcuts(&ui, &store);
                 ui.set_shortcuts_status("".into());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_set_article_filter(move |filter| {
+            if let Some(ui) = ui_weak.upgrade() {
+                let filter = normalize_article_filter(filter.as_str());
+                ui.set_article_filter(filter.into());
+                let _ = store.set_state("article_filter", filter);
+                if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
+                    ui.set_status(format!("Load failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_return_to_list(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                if ui.get_article_filter() == "all" {
+                    ui.set_compact_page("list".into());
+                } else if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
+                    ui.set_status(format!("Load failed: {error}").into());
+                }
             }
         });
     }
@@ -669,6 +701,27 @@ fn normalize_shortcut(value: &str) -> Option<String> {
     Some(key.to_ascii_lowercase().to_string())
 }
 
+fn normalize_article_filter(value: &str) -> &'static str {
+    match value {
+        "unread" => "unread",
+        "read" => "read",
+        _ => "all",
+    }
+}
+
+fn saved_article_filter(store: &Store) -> &'static str {
+    let value = store.state("article_filter").ok().flatten();
+    normalize_article_filter(value.as_deref().unwrap_or("all"))
+}
+
+fn article_read_filter(value: &str) -> Option<bool> {
+    match value {
+        "unread" => Some(false),
+        "read" => Some(true),
+        _ => None,
+    }
+}
+
 fn shortcut_value(store: &Store, key: &str, default: &str) -> String {
     store
         .state(key)
@@ -902,7 +955,8 @@ fn load_stream(
     };
 
     let query = ui.get_search_query();
-    let items = store.items(&stream, ARTICLE_PAGE, 0, false, Some(query.as_str()))?;
+    let read = article_read_filter(ui.get_article_filter().as_str());
+    let items = store.items_filtered(&stream, ARTICLE_PAGE, 0, read, Some(query.as_str()))?;
     let has_more = items.len() as i64 == ARTICLE_PAGE;
 
     {
@@ -1044,11 +1098,12 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
         return Ok(());
     };
     let query = ui.get_search_query();
-    let items = store.items(
+    let read = article_read_filter(ui.get_article_filter().as_str());
+    let items = store.items_filtered(
         &stream,
         ARTICLE_PAGE,
         offset as i64,
-        false,
+        read,
         Some(query.as_str()),
     )?;
     if items.is_empty() {

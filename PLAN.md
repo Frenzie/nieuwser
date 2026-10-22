@@ -88,9 +88,10 @@ Below 900 px the same panes switch to a single-pane layout: the article list and
 the window, the feed tree becomes a drawer opened from the list header, and the reader gets a
 back button. Escape closes the drawer or returns from the reader to the list. The article list
 loads 300 items at a time with a "Load more" button; empty states and a minimum window size keep
-the layout usable. The list reconciles rows by article ID instead of replacing the model,
-preserving scroll/selection across refreshes; the active row is kept in view when moving with
-`j`/`k`. Feed unread counts are right-aligned in a fixed-width column. Window size and
+the layout usable. The list can be filtered to all, unread-only, or read-only articles, and the
+chosen filter is remembered. The list reconciles rows by article ID instead of replacing the
+model, preserving scroll/selection across refreshes; the active row is kept in view when moving
+with `j`/`k`. Feed unread counts are right-aligned in a fixed-width column. Window size and
 position are stored in SQLite and restored on launch; Wayland position saves are skipped
 because that compositor does not expose them.
 
@@ -104,7 +105,9 @@ Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
 close the compact feed drawer, or return from the compact reader to the article list, and `?`
 opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
-bindings are stored in SQLite. Reader/navigation keys are fixed.
+bindings are stored in SQLite. Reader/navigation keys are fixed. In the compact reader, swipe
+left/right switches to the next/previous article, and three quick Space presses advance to the
+next article.
 Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
 also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
@@ -147,14 +150,15 @@ Working today:
 - Slint app: three-pane shell with a compact single-pane layout and feed drawer,
   settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
-  navigation, local search, feed selection, paginated article list, virtualized rich reader,
-  loading skeleton, bundled emoji fallback, cached feed icons and article images, persisted
-  light/dark theme, editable shortcuts and shortcut help, read/star/mark-all actions, manual
-  refresh that preserves the open article, and browser opening from the reader toolbar, keyboard,
-  double-click, and middle-click.
-- Tests: 24 core tests plus 2 app tests, covering API parsing/auth, reader blocks,
-  storage/migration, FTS search/backfill, reconciliation, cache eviction, image URL safety,
-  HTTP body limits, a mocked end-to-end sync, article-list reveal, and long-reader rendering.
+  navigation, local search, all/unread/read article filters, feed selection, paginated article
+  list, virtualized rich reader, loading skeleton, bundled emoji fallback, cached feed icons and
+  article images, persisted light/dark theme, restored window geometry, editable shortcuts and
+  shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
+  browser opening from the reader toolbar, keyboard, double-click, and middle-click.
+- Tests: 24 core tests plus 3 app tests, covering API parsing/auth, reader blocks,
+  storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
+  URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
+  reveal, and long-reader rendering.
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   pass. GitHub CI runs the test matrix, formatting, and clippy.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
@@ -165,7 +169,7 @@ Working today:
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
 
-Recent changes (2026-10-21):
+Recent changes (2026-10-22):
 
 - Replaced the all-at-once reader with a virtualized `ListView`, added a loading skeleton, and
   registered bundled Noto Emoji as the fallback font.
@@ -178,6 +182,8 @@ Recent changes (2026-10-21):
 - Added a compact single-pane layout below 900 px, with a feed drawer, reader back button, and
   Escape navigation.
 - Added shortcut help (`?`) and editable single-key command bindings stored in SQLite.
+- Added remembered window size and position.
+- Added all/unread/read article filters and compact-reader swipe/triple-Space navigation.
 - Added the release workflow, reproducible Linux packaging, AppImage integration/smoke test,
   and clippy in CI.
 

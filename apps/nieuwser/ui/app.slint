@@ -371,6 +371,7 @@ export component MainWindow inherits Window {
     private property <bool> compact: false;
     in-out property <string> compact-page: "list";
     in-out property <bool> feed-drawer-open: false;
+    private property <int> space-presses: 0;
     property <length> drag-start-x;
     property <length> drag-start-width;
     property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
@@ -405,6 +406,7 @@ export component MainWindow inherits Window {
     in property <bool> syncing: false;
     in-out property <bool> mark-read-on-open: true;
     in-out property <bool> mark-read-on-open-browser: true;
+    in-out property <string> article-filter: "all";
     in-out property <length> article-content-y: 0px;
     in-out property <string> search-query;
 
@@ -448,6 +450,8 @@ export component MainWindow inherits Window {
     callback copy-selection-links();
     callback load-more();
     callback search(string);
+    callback set-article-filter(string);
+    callback return-to-list();
     callback open-link(string);
     callback toggle-read();
     callback toggle-star();
@@ -461,6 +465,14 @@ export component MainWindow inherits Window {
         if (!root.compact) {
             root.feed-drawer-open = false;
         }
+    }
+    changed article-index => { root.space-presses = 0; }
+    changed compact-page => { root.space-presses = 0; }
+
+    Timer {
+        interval: 1s;
+        running: root.space-presses > 0;
+        triggered => { root.space-presses = 0; }
     }
 
     scroll-reader(delta) => {
@@ -508,6 +520,9 @@ export component MainWindow inherits Window {
         height: root.height;
 
         key-pressed(event) => {
+            if (event.text != " ") {
+                root.space-presses = 0;
+            }
             if (root.settings-open) {
                 if (event.text == Key.Escape) {
                     root.close-settings();
@@ -522,12 +537,34 @@ export component MainWindow inherits Window {
                 root.feed-drawer-open = false;
                 accept
             } else if (root.compact && root.compact-page == "reader" && event.text == Key.Escape) {
-                root.compact-page = "list";
+                root.return-to-list();
                 accept
-            } else if (event.text == Key.PageDown || (event.text == " " && !event.modifiers.shift)) {
+            } else if (event.text == Key.PageDown) {
                 root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
                 accept
-            } else if (event.text == Key.PageUp || (event.text == " " && event.modifiers.shift)) {
+            } else if (event.text == " " && !event.modifiers.shift) {
+                if (root.compact && root.compact-page == "reader") {
+                    root.space-presses += 1;
+                    if (root.space-presses >= 3) {
+                        root.space-presses = 0;
+                        if (root.article-index + 1 < root.articles.length) {
+                            root.next-article();
+                        } else {
+                            root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
+                        }
+                    } else {
+                        root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
+                    }
+                    accept
+                } else {
+                    root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
+                    accept
+                }
+            } else if (event.text == Key.PageUp) {
+                root.scroll-reader(reader-scroll.visible-height * 0.9);
+                accept
+            } else if (event.text == " " && event.modifiers.shift) {
+                root.space-presses = 0;
                 root.scroll-reader(reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == Key.Home) {
@@ -749,6 +786,34 @@ export component MainWindow inherits Window {
                         }
                     }
 
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "Show";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            text: "All";
+                            primary: root.article-filter == "all";
+                            enabled: !root.settings-open;
+                            clicked => { root.set-article-filter("all"); }
+                        }
+                        Button {
+                            text: "Unread";
+                            primary: root.article-filter == "unread";
+                            enabled: !root.settings-open;
+                            clicked => { root.set-article-filter("unread"); }
+                        }
+                        Button {
+                            text: "Read";
+                            primary: root.article-filter == "read";
+                            enabled: !root.settings-open;
+                            clicked => { root.set-article-filter("read"); }
+                        }
+                    }
+
                     if root.articles.length == 0 : Text {
                         text: "No articles match this view.";
                         color: Theme.text-faint;
@@ -877,6 +942,21 @@ export component MainWindow inherits Window {
                     set-read(value) => { root.set-selection-read(value); }
                     set-starred(value) => { root.set-selection-starred(value); }
 
+                SwipeGestureHandler {
+                    enabled: root.compact;
+                    width: parent.width;
+                    height: parent.height;
+                    handle-swipe-left: root.compact && root.article-index >= 0 && root.article-index + 1 < root.articles.length;
+                    handle-swipe-right: root.compact && root.article-index > 0;
+                    swiped => {
+                        let dx = self.current-position.x - self.pressed-position.x;
+                        if (dx < -80px) {
+                            root.next-article();
+                        } else if (dx > 80px) {
+                            root.prev-article();
+                        }
+                    }
+
                 VerticalLayout {
                     padding-top: 24px;
                     padding-bottom: 24px;
@@ -889,7 +969,7 @@ export component MainWindow inherits Window {
                         if root.compact : ToolbarIconButton {
                             icon: @image-url("icons/arrow-left.svg");
                             label: "Back to articles";
-                            clicked => { root.compact-page = "list"; }
+                            clicked => { root.return-to-list(); }
                         }
                         Text {
                             text: "Reader";
@@ -1051,6 +1131,7 @@ export component MainWindow inherits Window {
                         }
                         if root.reader-loading : ReaderSkeleton { }
                     }
+                }
                 }
             }
         }
@@ -1489,6 +1570,8 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll reader"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Space ×3"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next article (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Swipe ← / →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next / previous article (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }
