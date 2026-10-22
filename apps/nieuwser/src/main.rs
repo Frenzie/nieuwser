@@ -38,6 +38,7 @@ const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
 const READER_CACHE_LIMIT: usize = 24;
+const PREVIEW_HTML_BYTES: usize = 16 * 1024;
 const MIN_WINDOW_WIDTH: f32 = 560.0;
 const MIN_WINDOW_HEIGHT: f32 = 480.0;
 const SHORTCUTS: [(&str, &str, &str); 5] = [
@@ -1238,7 +1239,17 @@ fn preview_excerpt(store: &Store, id: &str) -> String {
     } else {
         &item.summary_html
     };
-    html_to_text(html)
+    preview_text(html)
+}
+
+// A preview shows at most 80 words, so parsing a whole long article wastes
+// milliseconds on every adjacent-article update; 16 KB is far more than 80 words.
+fn preview_text(html: &str) -> String {
+    let mut end = html.len().min(PREVIEW_HTML_BYTES);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    html_to_text(&html[..end])
         .split_whitespace()
         .take(80)
         .collect::<Vec<_>>()
@@ -2036,6 +2047,18 @@ mod article_model_tests {
         assert!(model.row_data(0).unwrap().read);
         assert_eq!(model.row_data(0).unwrap().id, "a");
         assert_eq!(model.row_data(1).unwrap().id, "c");
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_text_reads_only_the_start_of_long_articles() {
+        let html = format!("<p>{}</p>", "é ".repeat(20_000));
+        let text = preview_text(&html);
+        assert_eq!(text.split_whitespace().count(), 80);
     }
 }
 
