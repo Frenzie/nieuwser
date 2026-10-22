@@ -187,6 +187,57 @@ component FilterChip inherits Rectangle {
     }
 }
 
+component ReaderPreview inherits Rectangle {
+    in property <string> label;
+    in property <string> title;
+    in property <string> meta;
+    in property <string> excerpt;
+    in property <bool> align-bottom: false;
+
+    background: Theme.surface;
+
+    Rectangle {
+        y: root.align-bottom ? parent.height - 1px : 0px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        alignment: root.align-bottom ? end : start;
+        padding: 24px;
+        spacing: 10px;
+
+        Text {
+            text: root.label;
+            color: Theme.text-muted;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        Text {
+            text: root.title;
+            font-size: 24px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.meta;
+            color: Theme.text-muted;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.divider;
+        }
+        Text {
+            text: root.excerpt;
+            font-size: 15px;
+            wrap: word-wrap;
+        }
+    }
+}
+
 component ShortcutRow inherits Rectangle {
     in property <string> label;
     in property <string> key-text;
@@ -402,7 +453,16 @@ export component MainWindow inherits Window {
     in-out property <string> compact-page: "list";
     in-out property <bool> feed-drawer-open: false;
     private property <int> space-presses: 0;
-    private property <length> reader-swipe-offset: 0px;
+    private property <length> reader-swipe-x: 0px;
+    private property <length> reader-swipe-y: 0px;
+    private property <length> reader-gesture-start-content-y: 0px;
+    private property <bool> reader-gesture-tracked: false;
+    private property <bool> reader-gesture-horizontal: false;
+    private property <bool> reader-gesture-vertical: false;
+    private property <bool> reader-gesture-at-top: false;
+    private property <bool> reader-gesture-at-bottom: false;
+    private property <bool> reader-at-top: reader-scroll.content-y >= 0px - 1px;
+    private property <bool> reader-at-bottom: reader-scroll.content-y <= reader-scroll.visible-height - reader-scroll.content-height + 1px;
     property <length> drag-start-x;
     property <length> drag-start-width;
     property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
@@ -432,6 +492,12 @@ export component MainWindow inherits Window {
     in property <string> reader-meta;
     in property <bool> reader-loading;
     in property <[ReaderBlock]> reader-blocks;
+    in property <string> reader-prev-title;
+    in property <string> reader-prev-meta;
+    in property <string> reader-prev-excerpt;
+    in property <string> reader-next-title;
+    in property <string> reader-next-meta;
+    in property <string> reader-next-excerpt;
     in property <string> status;
     in property <string> last-synced;
     in property <bool> syncing: false;
@@ -495,7 +561,11 @@ export component MainWindow inherits Window {
     changed compact => {
         if (!root.compact) {
             root.feed-drawer-open = false;
-            root.reader-swipe-offset = 0px;
+            root.reader-swipe-x = 0px;
+            root.reader-swipe-y = 0px;
+            root.reader-gesture-tracked = false;
+            root.reader-gesture-horizontal = false;
+            root.reader-gesture-vertical = false;
         }
     }
     changed article-index => { root.space-presses = 0; }
@@ -966,32 +1036,14 @@ export component MainWindow inherits Window {
                     set-read(value) => { root.set-selection-read(value); }
                     set-starred(value) => { root.set-selection-starred(value); }
 
-                SwipeGestureHandler {
-                    enabled: root.compact;
+                Rectangle {
+                    x: root.reader-swipe-x;
+                    y: root.reader-swipe-y;
                     width: parent.width;
                     height: parent.height;
-                    handle-swipe-left: root.compact && root.article-index >= 0 && root.article-index + 1 < root.articles.length;
-                    handle-swipe-right: root.compact && root.article-index > 0;
-                    moved => {
-                        if (self.swiping) {
-                            root.reader-swipe-offset = Math.max(0px - self.width / 3, Math.min(
-                                self.width / 3,
-                                self.current-position.x - self.pressed-position.x));
-                        }
-                    }
-                    swiped => {
-                        let dx = self.current-position.x - self.pressed-position.x;
-                        root.reader-swipe-offset = 0px;
-                        if (dx < -80px) {
-                            root.next-article();
-                        } else if (dx > 80px) {
-                            root.prev-article();
-                        }
-                    }
-                    cancelled => { root.reader-swipe-offset = 0px; }
+                    background: Theme.surface;
 
                 VerticalLayout {
-                    x: root.reader-swipe-offset;
                     padding-top: 24px;
                     padding-bottom: 24px;
                     padding-left: 24px;
@@ -1166,6 +1218,97 @@ export component MainWindow inherits Window {
                         if root.reader-loading : ReaderSkeleton { }
                     }
                 }
+                }
+
+                if root.compact && root.reader-prev-title != "" : ReaderPreview {
+                    x: root.reader-swipe-x;
+                    y: 0px - parent.height + root.reader-swipe-y;
+                    width: parent.width;
+                    height: parent.height;
+                    label: "Previous article";
+                    title: root.reader-prev-title;
+                    meta: root.reader-prev-meta;
+                    excerpt: root.reader-prev-excerpt;
+                    align-bottom: true;
+                }
+                if root.compact && root.reader-next-title != "" : ReaderPreview {
+                    x: root.reader-swipe-x;
+                    y: parent.height + root.reader-swipe-y;
+                    width: parent.width;
+                    height: parent.height;
+                    label: "Next article";
+                    title: root.reader-next-title;
+                    meta: root.reader-next-meta;
+                    excerpt: root.reader-next-excerpt;
+                }
+
+                if root.compact : SwipeGestureHandler {
+                    x: 0px;
+                    y: 66px;
+                    width: parent.width;
+                    height: parent.height - 66px;
+                    handle-swipe-right: true;
+                    handle-swipe-up: true;
+                    handle-swipe-down: true;
+                    moved => {
+                        if (self.swiping) {
+                            if (!root.reader-gesture-tracked) {
+                                root.reader-gesture-tracked = true;
+                                root.reader-gesture-start-content-y = reader-scroll.content-y;
+                                root.reader-gesture-at-top = root.reader-at-top;
+                                root.reader-gesture-at-bottom = root.reader-at-bottom;
+                            }
+                            let dx = self.current-position.x - self.pressed-position.x;
+                            let dy = self.current-position.y - self.pressed-position.y;
+                            if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
+                                if (abs(dx) > abs(dy)) {
+                                    root.reader-gesture-horizontal = true;
+                                } else {
+                                    root.reader-gesture-vertical = true;
+                                }
+                            }
+                            if (root.reader-gesture-horizontal) {
+                                root.reader-swipe-x = Math.max(0px, Math.min(parent.width / 3, dx));
+                                root.reader-swipe-y = 0px;
+                            } else if ((root.reader-gesture-at-bottom && dy < 0px)
+                                || (root.reader-gesture-at-top && dy > 0px)) {
+                                root.reader-swipe-x = 0px;
+                                root.reader-swipe-y = Math.max(0px - parent.height / 3, Math.min(
+                                    parent.height / 3, dy));
+                            } else {
+                                root.reader-swipe-x = 0px;
+                                root.reader-swipe-y = 0px;
+                                reader-scroll.content-y = Math.max(
+                                    reader-scroll.visible-height - reader-scroll.content-height,
+                                    Math.min(0px, root.reader-gesture-start-content-y + dy));
+                            }
+                        }
+                    }
+                    swiped => {
+                        let dx = self.current-position.x - self.pressed-position.x;
+                        let dy = self.current-position.y - self.pressed-position.y;
+                        root.reader-swipe-x = 0px;
+                        root.reader-swipe-y = 0px;
+                        if (root.reader-gesture-horizontal) {
+                            if (dx > 80px) {
+                                root.return-to-list();
+                            }
+                        } else if (root.reader-gesture-at-bottom && dy < -80px) {
+                            root.next-article();
+                        } else if (root.reader-gesture-at-top && dy > 80px) {
+                            root.prev-article();
+                        }
+                        root.reader-gesture-tracked = false;
+                        root.reader-gesture-horizontal = false;
+                        root.reader-gesture-vertical = false;
+                    }
+                    cancelled => {
+                        root.reader-swipe-x = 0px;
+                        root.reader-swipe-y = 0px;
+                        root.reader-gesture-tracked = false;
+                        root.reader-gesture-horizontal = false;
+                        root.reader-gesture-vertical = false;
+                    }
                 }
             }
         }
@@ -1605,7 +1748,8 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Space ×3"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next article (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Swipe ← / →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next / previous article (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Swipe ↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next / previous at reader end (compact)"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }

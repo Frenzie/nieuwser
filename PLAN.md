@@ -105,9 +105,10 @@ Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
 close the compact feed drawer, or return from the compact reader to the article list, and `?`
 opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
-bindings are stored in SQLite. Reader/navigation keys are fixed. In the compact reader, swipe
-left/right switches to the next/previous article, and three quick Space presses advance to the
-next article.
+bindings are stored in SQLite. Reader/navigation keys are fixed. In the compact reader, swipe up
+at the bottom or down at the top to switch to the next/previous article with a live preview of
+the adjacent article, swipe right returns to the article list, and three quick Space presses
+advance to the next article.
 Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
 also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
@@ -183,7 +184,8 @@ Recent changes (2026-10-22):
   Escape navigation.
 - Added shortcut help (`?`) and editable single-key command bindings stored in SQLite.
 - Added remembered window size and position.
-- Added all/unread/read article filters and compact-reader swipe/triple-Space navigation.
+- Added all/unread/read article filters and compact-reader vertical swipe pagination with adjacent
+  article previews, plus right-swipe back to the list and triple-Space next navigation.
 - Added the release workflow, reproducible Linux packaging, AppImage integration/smoke test,
   and clippy in CI.
 

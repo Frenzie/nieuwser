@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use nieuwser_core::media::fetch_image;
 use nieuwser_core::models::Stream;
-use nieuwser_core::reader::{Block, BlockKind, html_to_blocks};
+use nieuwser_core::reader::{Block, BlockKind, html_to_blocks, html_to_text};
 use nieuwser_core::store::ItemSummary;
 use nieuwser_core::{Client, Store, SyncEngine};
 use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
@@ -968,6 +968,7 @@ fn load_stream(
     push_articles(ui, state);
     ui.set_has_more_articles(has_more);
     ui.set_article_index(-1);
+    update_adjacent_previews(ui, store, state, -1);
     ui.set_compact_page("list".into());
     ui.set_reader_title("".into());
     ui.set_reader_meta("".into());
@@ -1164,6 +1165,86 @@ fn reload_preserving_selection(
     Ok(())
 }
 
+fn update_adjacent_previews(
+    ui: &MainWindow,
+    store: &Store,
+    state: &Arc<Mutex<UiState>>,
+    index: i32,
+) {
+    if index < 0 {
+        set_adjacent_preview(ui, store, true, None);
+        set_adjacent_preview(ui, store, false, None);
+        return;
+    }
+    let (previous, next) = {
+        let state = state.lock().unwrap();
+        let index = index as usize;
+        (
+            index
+                .checked_sub(1)
+                .and_then(|i| state.items.get(i))
+                .cloned(),
+            state.items.get(index + 1).cloned(),
+        )
+    };
+    set_adjacent_preview(ui, store, true, previous.as_ref());
+    set_adjacent_preview(ui, store, false, next.as_ref());
+}
+
+fn set_adjacent_preview(
+    ui: &MainWindow,
+    store: &Store,
+    previous: bool,
+    item: Option<&ItemSummary>,
+) {
+    let (title, meta, excerpt) = match item {
+        Some(item) => (
+            display_title(&item.title),
+            summary_meta(item),
+            preview_excerpt(store, &item.id),
+        ),
+        None => (String::new(), String::new(), String::new()),
+    };
+    if previous {
+        ui.set_reader_prev_title(title.into());
+        ui.set_reader_prev_meta(meta.into());
+        ui.set_reader_prev_excerpt(excerpt.into());
+    } else {
+        ui.set_reader_next_title(title.into());
+        ui.set_reader_next_meta(meta.into());
+        ui.set_reader_next_excerpt(excerpt.into());
+    }
+}
+
+fn summary_meta(item: &ItemSummary) -> String {
+    let mut meta = item.feed_title.clone();
+    if let Some(author) = item
+        .author
+        .as_ref()
+        .filter(|author| !author.trim().is_empty())
+    {
+        meta.push_str(" · ");
+        meta.push_str(author);
+    }
+    meta
+}
+
+fn preview_excerpt(store: &Store, id: &str) -> String {
+    let Ok(Some(item)) = store.item(id) else {
+        return String::new();
+    };
+    let html = if !item.content_html.trim().is_empty() {
+        &item.content_html
+    } else {
+        &item.summary_html
+    };
+    html_to_text(html)
+        .split_whitespace()
+        .take(80)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn select_article(
     ui: &MainWindow,
     store: &Arc<Store>,
@@ -1173,8 +1254,10 @@ fn select_article(
     allow_fetch: bool,
 ) -> Result<()> {
     let Some(summary) = selected_item(state, index) else {
+        update_adjacent_previews(ui, store, state, -1);
         return Ok(());
     };
+    update_adjacent_previews(ui, store, state, index);
     let id = summary.id.clone();
     ui.invoke_scroll_reader_to_top();
     ui.set_reader_loading(false);
