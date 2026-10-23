@@ -524,6 +524,16 @@ fn bind_callbacks(
 
     {
         let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_move_list_selection(move |delta| {
+            if let Some(ui) = ui_weak.upgrade() {
+                move_list_selection(&ui, &state, delta);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
         ui.on_load_more(move || {
@@ -1695,6 +1705,52 @@ fn apply_selection(state: &Arc<Mutex<UiState>>, index: i32, ctrl: bool, shift: b
     true
 }
 
+fn move_list_selection(ui: &MainWindow, state: &Arc<Mutex<UiState>>, delta: i32) {
+    let Some(next) = shift_select_in_view(state, ui.get_article_index(), delta) else {
+        return;
+    };
+    ui.set_article_index(next);
+    ui.invoke_reveal_article(next);
+    sync_article_rows(ui, state);
+}
+
+fn shift_select_in_view(state: &Arc<Mutex<UiState>>, current: i32, delta: i32) -> Option<i32> {
+    if delta == 0 {
+        return None;
+    }
+    let (start, len) = {
+        let state = state.lock().unwrap();
+        let len = state.items.len();
+        if len == 0 {
+            return None;
+        }
+        let start = if current < 0 {
+            if delta > 0 { 0 } else { len as i32 - 1 }
+        } else {
+            current.min(len as i32 - 1)
+        };
+        (start, len)
+    };
+    if current < 0 {
+        apply_selection(state, start, false, false);
+        return Some(start);
+    }
+
+    {
+        let mut state = state.lock().unwrap();
+        let anchor_is_valid = state
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| state.items.iter().any(|item| &item.id == anchor));
+        if !anchor_is_valid {
+            state.anchor = Some(state.items[start as usize].id.clone());
+        }
+    }
+    let next = (start + delta).clamp(0, len as i32 - 1);
+    apply_selection(state, next, false, true);
+    Some(next)
+}
+
 fn select_all_in_view(state: &Arc<Mutex<UiState>>) -> usize {
     let mut state = state.lock().unwrap();
     state.selected = state.items.iter().map(|item| item.id.clone()).collect();
@@ -2392,6 +2448,64 @@ mod selection_tests {
             HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
         );
         assert_eq!(state.anchor.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn shift_arrows_extend_the_selection_from_its_anchor() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let state = Arc::new(Mutex::new(UiState {
+            streams: Vec::new(),
+            items: vec![summary("a"), summary("b"), summary("c"), summary("d")],
+            selected: HashSet::from(["b".to_string()]),
+            anchor: Some("b".to_string()),
+            handle: runtime.handle().clone(),
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+        }));
+
+        assert_eq!(shift_select_in_view(&state, 1, 1), Some(2));
+        assert_eq!(
+            state.lock().unwrap().selected,
+            HashSet::from(["b".to_string(), "c".to_string()])
+        );
+        assert_eq!(shift_select_in_view(&state, 2, 1), Some(3));
+        assert_eq!(
+            state.lock().unwrap().selected,
+            HashSet::from(["b".to_string(), "c".to_string(), "d".to_string()])
+        );
+        assert_eq!(shift_select_in_view(&state, 3, -1), Some(2));
+        assert_eq!(
+            state.lock().unwrap().selected,
+            HashSet::from(["b".to_string(), "c".to_string()])
+        );
+    }
+
+    #[test]
+    fn shift_arrows_start_at_the_edge_when_no_row_is_active() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let state = Arc::new(Mutex::new(UiState {
+            streams: Vec::new(),
+            items: vec![summary("a"), summary("b")],
+            selected: HashSet::new(),
+            anchor: None,
+            handle: runtime.handle().clone(),
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+        }));
+
+        assert_eq!(shift_select_in_view(&state, -1, 1), Some(0));
+        assert_eq!(
+            state.lock().unwrap().selected,
+            HashSet::from(["a".to_string()])
+        );
+        assert_eq!(shift_select_in_view(&state, 0, -1), Some(0));
+        assert_eq!(shift_select_in_view(&state, 1, 1), Some(1));
     }
 
     #[test]

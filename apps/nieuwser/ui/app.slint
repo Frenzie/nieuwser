@@ -591,6 +591,7 @@ export component MainWindow inherits Window {
     callback open-selection();
     callback copy-selection-links();
     callback select-all();
+    callback move-list-selection(int);
     callback load-more();
     callback search(string);
     callback set-article-filter(string);
@@ -736,6 +737,18 @@ export component MainWindow inherits Window {
                 accept
             } else if (event.text == Key.End) {
                 root.scroll-reader(0px - reader-scroll.content-height);
+                accept
+            } else if (event.text == Key.DownArrow && event.modifiers.shift
+                && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta
+                && (!root.compact || (root.compact-page == "list" && !root.feed-drawer-open))) {
+                root.nav-presses = 0;
+                root.move-list-selection(1);
+                accept
+            } else if (event.text == Key.UpArrow && event.modifiers.shift
+                && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta
+                && (!root.compact || (root.compact-page == "list" && !root.feed-drawer-open))) {
+                root.nav-presses = 0;
+                root.move-list-selection(-1);
                 accept
             } else if (event.text == Key.DownArrow) {
                 root.nav-press(false, 0px - 64px);
@@ -1829,6 +1842,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Shift+↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Extend article selection in the list"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "?"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Show this help"; color: Theme.text-muted; font-size: 12px; } }
                             }

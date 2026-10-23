@@ -113,7 +113,8 @@ concurrency; inline images are promoted out of paragraphs.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
-articles in the current view, `Esc` close settings,
+articles in the current view, `Shift+↑`/`Shift+↓` extend the selected range in the list, `Esc`
+close settings,
 close the compact feed drawer, or return from the compact reader to the article list, and `?`
 opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
 bindings are stored in SQLite. Reader/navigation keys are fixed. In both layouts, three quick
