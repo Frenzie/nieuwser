@@ -21,6 +21,7 @@ const INITIAL_STARRED_ITEMS: usize = 1_000;
 const BACKFILL_LIMIT: usize = 1_000;
 const TAG_READ: &str = "user/-/state/com.google/read";
 const TAG_STARRED: &str = "user/-/state/com.google/starred";
+const ITEM_TAG_PREFIX: &str = "tag:google.com,2005:reader/item/";
 
 #[derive(Debug, Default)]
 pub struct SyncReport {
@@ -400,7 +401,7 @@ impl SyncEngine {
                 .iter()
                 .filter(|op| op.op == op_name)
                 .filter_map(|op| op.item_id.as_deref())
-                .map(|id| short_id(id).to_string())
+                .map(canonical_item_id)
                 .collect();
             for chunk in ids.chunks(100) {
                 let add_tags: Vec<&str> = (!add.is_empty()).then_some(add).into_iter().collect();
@@ -410,6 +411,14 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+}
+
+fn canonical_item_id(id: &str) -> String {
+    if id.is_empty() || id.starts_with(ITEM_TAG_PREFIX) {
+        id.to_string()
+    } else {
+        format!("{ITEM_TAG_PREFIX}{id}")
     }
 }
 
@@ -474,6 +483,18 @@ mod tests {
             "categories": categories,
             "origin": {"streamId": "feed/1", "title": "One"}
         })
+    }
+
+    #[test]
+    fn builds_canonical_item_tags() {
+        assert_eq!(
+            canonical_item_id("1234abcd"),
+            "tag:google.com,2005:reader/item/1234abcd"
+        );
+        assert_eq!(
+            canonical_item_id("tag:google.com,2005:reader/item/1234abcd"),
+            "tag:google.com,2005:reader/item/1234abcd"
+        );
     }
 
     #[test]
@@ -639,6 +660,11 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("token"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
             .and(path("/api/greader.php/reader/api/0/subscription/list"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "subscriptions": [{"id": "feed/1", "title": "One"}]
@@ -720,5 +746,19 @@ mod tests {
         assert_eq!(store.dead_outbox_count().unwrap(), 1);
         assert!(store.outbox(10).unwrap().is_empty());
         assert!(!store.item("1").unwrap().unwrap().read);
+
+        let requests = server.received_requests().await.unwrap();
+        let edit = requests
+            .iter()
+            .find(|r| r.url.path().ends_with("/reader/api/0/edit-tag"))
+            .unwrap();
+        let pairs: Vec<(String, String)> = url::form_urlencoded::parse(&edit.body)
+            .into_owned()
+            .collect();
+        assert!(
+            pairs
+                .iter()
+                .any(|(key, value)| { key == "i" && value == "tag:google.com,2005:reader/item/1" })
+        );
     }
 }

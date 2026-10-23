@@ -71,7 +71,9 @@ Gotchas:
 - Feeds belong to exactly one folder in FreshRSS.
 - IDs come in two forms: `stream/contents` returns
   `tag:google.com,2005:reader/item/<16-hex>`, while `stream/items/ids` returns the same ID as a
-  decimal. Use the hex suffix for local IDs and `edit-tag`; match decimal IDs for reconciliation.
+  decimal. Store the hex suffix locally, but send full item tags (or decimal IDs) to `edit-tag`
+  and `stream/items/contents`: FreshRSS treats an all-digit bare ID as decimal and can misread
+  an all-digit hex suffix. Match decimal IDs to local timestamps for reconciliation.
 - Always send `Content-Type: application/x-www-form-urlencoded` on writes.
 - Treat an empty `subscription/list` response as incomplete and never prune the local archive on it.
 
