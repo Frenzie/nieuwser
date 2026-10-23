@@ -1,86 +1,94 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 768" role="img" aria-labelledby="title description">
+  <title id="title">Origami newspaper bird</title>
+  <desc id="description">A folded newspaper bird on a blue-to-orange gradient tile.</desc>
   <defs>
-    <!-- Background Gradient (Blue to Sunset Warmth matching the concept) -->
-    <linearGradient id="sky-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1472cb" />
-      <stop offset="55%" stop-color="#2a93f4" />
-      <stop offset="80%" stop-color="#e98d36" />
-      <stop offset="100%" stop-color="#f5c242" />
+    <linearGradient id="sky" x1="0.28" y1="0" x2="0.72" y2="1">
+      <stop offset="0" stop-color="#075092"/>
+      <stop offset="0.42" stop-color="#087db2"/>
+      <stop offset="0.7" stop-color="#3197a5"/>
+      <stop offset="1" stop-color="#f79424"/>
     </linearGradient>
-
-    <!-- Newspaper Print Texture Pattern -->
-    <pattern id="newspaper-print" width="32" height="32" patternUnits="userSpaceOnUse" patternTransform="rotate(15)">
-      <rect width="32" height="32" fill="#f8f9fa" />
-      <!-- Headline bar -->
-      <rect x="2" y="3" width="20" height="3" fill="#2d3748" />
-      <!-- Text columns -->
-      <line x1="2" y1="9" x2="20" y2="9" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,1" />
-      <line x1="2" y1="13" x2="20" y2="13" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="3,1" />
-      <line x1="2" y1="17" x2="14" y2="17" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,2" />
-      <!-- Halftone photo box simulation -->
-      <rect x="21" y="9" width="9" height="11" fill="#cbd5e0" />
-      <circle cx="23.5" cy="11.5" r="0.7" fill="#2d3748" />
-      <circle cx="26.5" cy="11.5" r="0.7" fill="#2d3748" />
-      <circle cx="23.5" cy="14.5" r="0.7" fill="#2d3748" />
-      <circle cx="29.5" cy="11.5" r="0.7" fill="#2d3748" />
-      <!-- More text lines -->
-      <line x1="2" y1="22" x2="30" y2="22" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="4,1" />
-      <line x1="2" y1="26" x2="26" y2="26" stroke="#4a5568" stroke-width="1.5" stroke-dasharray="2,2" />
+    <radialGradient id="sunset" cx="0.48" cy="0.88" r="0.58">
+      <stop offset="0" stop-color="#ffb52d" stop-opacity="0.98"/>
+      <stop offset="0.48" stop-color="#ff9828" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#ff9828" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="1" stop-color="#e8e7e2"/>
+    </linearGradient>
+    <linearGradient id="paperShade" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5f4ef"/>
+      <stop offset="1" stop-color="#c9c9c5"/>
+    </linearGradient>
+    <pattern id="newsDots" width="5" height="5" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.62" fill="#555b5e" opacity="0.48"/>
+      <circle cx="3.7" cy="3.4" r="0.48" fill="#717579" opacity="0.34"/>
     </pattern>
-
-    <!-- Halftone Dot Pattern for Shadow Facets -->
-    <pattern id="halftone" width="8" height="8" patternUnits="userSpaceOnUse">
-      <circle cx="4" cy="4" r="1.5" fill="#1a202c" opacity="0.15" />
+    <pattern id="fineLines" width="34" height="12" patternUnits="userSpaceOnUse">
+      <path d="M0 2H31 M0 5H27 M0 8H32 M0 11H22" stroke="#707478" stroke-width="0.75" opacity="0.56"/>
     </pattern>
-
-    <!-- Soft Drop Shadow for the Bird -->
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.3" />
+    <clipPath id="tile">
+      <rect width="768" height="768" rx="154"/>
+    </clipPath>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="150%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="9"/>
+      <feOffset dy="9"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.22"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
 
-  <!-- App Icon Base Squircle -->
-  <rect width="512" height="512" rx="112" ry="112" fill="url(#sky-gradient)" />
+  <g clip-path="url(#tile)">
+    <rect width="768" height="768" fill="url(#sky)"/>
+    <rect width="768" height="768" fill="url(#sunset)"/>
 
-  <!-- Origami Bird Container -->
-  <g filter="url(#shadow)" transform="translate(15, 5)">
+    <g filter="url(#lift)" stroke-linejoin="round">
+      <!-- Rear folded sheet and narrow beak-side plane -->
+      <path d="M410 176 650 145 493 330 431 391 391 346Z" fill="url(#paperShade)" stroke="#c9c9c6" stroke-width="1.5"/>
+      <path d="M410 176 650 145 548 195 492 330Z" fill="#f7f7f5"/>
+      <path d="M548 195 650 145 493 330Z" fill="url(#newsDots)" opacity="0.8"/>
+      <path d="M556 204 624 176 M548 214 610 190 M539 224 603 201 M531 234 596 211" fill="none" stroke="#74797b" stroke-width="1.2" opacity="0.7"/>
 
-    <!-- UPPER WING / BACK TIP -->
-    <polygon points="340,75 385,105 315,210" fill="#e2e8f0" />
-    <polygon points="340,75 385,105 315,210" fill="url(#halftone)" />
+      <!-- Left paper wing -->
+      <path d="M194 416 130 273 210 274 318 319Z" fill="url(#paper)" stroke="#d1d1cd" stroke-width="1.5"/>
+      <path d="M194 416 130 273 210 274 318 319Z" fill="url(#newsDots)" opacity="0.78"/>
+      <path d="M130 273 92 328 155 318Z" fill="#f5f4f0" stroke="#d1d1cd" stroke-width="1.5"/>
+      <path d="M130 273 155 318 92 328Z" fill="url(#paperShade)" opacity="0.78"/>
 
-    <!-- MAIN NEWSPAPER WING (Right Wing) -->
-    <polygon points="210,140 375,225 240,295" fill="url(#newspaper-print)" />
-    <!-- Wing Crease Gradient Overlay for 3D fold effect -->
-    <polygon points="210,140 375,225 240,295" fill="linear-gradient" opacity="0.1" />
+      <!-- Tall leading fold -->
+      <path d="M194 416 326 188 615 104 423 383Z" fill="url(#paper)" stroke="#dededb" stroke-width="1.5"/>
+      <path d="M326 188 615 104 423 383Z" fill="url(#newsDots)" opacity="0.74"/>
+      <path d="M326 188 423 383 194 416Z" fill="#fbfbf9"/>
+      <path d="M326 188 423 383 194 416Z" fill="url(#newsDots)" opacity="0.34"/>
+      <path d="M194 416 326 188 M423 383 615 104" fill="none" stroke="#bfc1c0" stroke-width="2" opacity="0.8"/>
 
-    <!-- UPPER BODY SPINE -->
-    <polygon points="210,140 340,75 315,210" fill="#ffffff" />
+      <!-- Body and long downward tail -->
+      <path d="M194 416 423 383 499 555 390 477 314 448Z" fill="url(#paper)" stroke="#d0d0cc" stroke-width="1.5"/>
+      <path d="M423 383 499 555 431 525 414 425Z" fill="url(#paperShade)" stroke="#c8c8c4" stroke-width="1.5"/>
+      <path d="M423 383 499 555 431 525 414 425Z" fill="url(#newsDots)" opacity="0.68"/>
+      <path d="M194 416 314 448 390 477 423 383Z" fill="#f4f3ef" stroke="#d4d4d0" stroke-width="1"/>
 
-    <!-- HEAD & BEAK -->
-    <!-- Lower Head Facet -->
-    <polygon points="130,225 190,205 210,295" fill="#edf2f7" />
-    <!-- Upper Head Facet (Bright) -->
-    <polygon points="130,225 180,180 190,205" fill="#ffffff" />
-    <!-- Beak tip shadow fold -->
-    <polygon points="130,225 160,215 190,205" fill="#cbd5e0" opacity="0.5" />
+      <!-- Printed newspaper block on the body -->
+      <g transform="translate(215 412) rotate(-8)" fill="#40464a">
+        <rect x="0" y="0" width="28" height="10" fill="#65696b"/>
+        <text x="34" y="13" font-family="Georgia, 'Times New Roman', serif" font-size="16" font-weight="700" letter-spacing="0.3">THE GLOBAL NEWS</text>
+        <path d="M0 19H174" stroke="#686d70" stroke-width="1.4"/>
+        <text x="0" y="31" font-family="Georgia, 'Times New Roman', serif" font-size="5.6" font-weight="700">A new perspective on the world</text>
+        <text x="0" y="39" font-family="Georgia, 'Times New Roman', serif" font-size="4.5">Stories and ideas, gathered from across the globe.</text>
+        <text x="0" y="46" font-family="Georgia, 'Times New Roman', serif" font-size="4.5">The latest reports, analysis and discoveries.</text>
+        <rect x="99" y="24" width="54" height="37" fill="#85898a"/>
+        <path d="M101 54 114 38 123 46 136 30 151 55Z" fill="#d2d2cf"/>
+        <circle cx="136" cy="32" r="4" fill="#e6e5e1"/>
+        <rect x="0" y="52" width="91" height="1.2" fill="#727779"/>
+        <rect x="0" y="57" width="87" height="1.2" fill="#727779"/>
+        <rect x="0" y="62" width="93" height="1.2" fill="#727779"/>
+      </g>
 
-    <!-- CENTRAL BODY CORE FOLD -->
-    <polygon points="210,140 240,295 190,205" fill="#cbd5e0" />
-
-    <!-- LOWER BELLY / TAIL SECTION -->
-    <polygon points="240,295 345,430 280,310" fill="url(#newspaper-print)" />
-    <!-- Tail Halftone shading for depth -->
-    <polygon points="240,295 345,430 280,310" fill="url(#halftone)" />
-
-    <!-- RIGHT TAIL FEATHER FIN -->
-    <polygon points="345,430 370,270 280,310" fill="#cbd5e0" />
-    <polygon points="345,430 370,270 280,310" fill="url(#halftone)" />
-
-    <!-- SHARP CREASE HIGHLIGHT LINES (Origami folds) -->
-    <polyline points="210,140 240,295 375,225" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.8" />
-    <polyline points="190,205 240,295" fill="none" stroke="#a0aec0" stroke-width="1.5" />
-    <polyline points="240,295 280,310" fill="none" stroke="#a0aec0" stroke-width="1.5" />
-    <polyline points="315,210 240,295" fill="none" stroke="#cbd5e0" stroke-width="1.5" />
+      <!-- Fine print on the tail -->
+      <path d="M432 444 455 491 M438 440 461 486 M444 436 467 481 M450 432 473 477 M456 428 479 472" fill="none" stroke="#62696d" stroke-width="1.2" opacity="0.72"/>
+      <path d="M435 464 468 450 M439 472 472 458 M443 480 476 466 M447 488 480 474 M451 496 484 482" fill="none" stroke="#676d70" stroke-width="1" opacity="0.58"/>
+      <path d="M431 525 499 555 453 532Z" fill="#fff" opacity="0.75"/>
+    </g>
   </g>
 </svg>
