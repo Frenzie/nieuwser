@@ -96,6 +96,9 @@ pub struct StreamContents {
     pub items: Vec<Item>,
     #[serde(default)]
     pub continuation: Option<String>,
+    /// Server time when the response was generated, used as the next `ot`.
+    #[serde(default, deserialize_with = "de_opt_i64")]
+    pub updated: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

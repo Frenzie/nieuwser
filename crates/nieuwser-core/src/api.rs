@@ -408,7 +408,8 @@ mod tests {
                 "categories": ["user/-/state/com.google/read"],
                 "origin": {"streamId": "feed/7", "title": "Feed"}
             }],
-            "continuation": "120"
+            "continuation": "120",
+            "updated": 1700000000
         });
         let contents: StreamContents = serde_json::from_value(body).unwrap();
         let item = &contents.items[0];
@@ -417,5 +418,6 @@ mod tests {
         assert!(item.is_read());
         assert_eq!(item.body_html(), "<p>Body</p>");
         assert_eq!(contents.continuation.as_deref(), Some("120"));
+        assert_eq!(contents.updated, Some(1_700_000_000));
     }
 }

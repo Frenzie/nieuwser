@@ -13,6 +13,9 @@ pub struct SyncEngine {
     store: Arc<Store>,
 }
 
+const WATERMARK_OVERLAP_SECONDS: i64 = 5 * 60;
+const CONTENT_PAGE_SIZE: u32 = 100;
+
 #[derive(Debug, Default)]
 pub struct SyncReport {
     pub pushed_ops: usize,
@@ -68,21 +71,20 @@ impl SyncEngine {
         self.store.reconcile_feeds(&subscriptions, &tags)?;
         self.store.set_unread_counts(&counts.unreadcounts)?;
 
-        let newest = self.store.newest_item_usec()?;
-        let ot = (newest > 0).then_some(newest / 1_000_000);
+        let ot = self.sync_watermark()?;
         let max_items = if ot.is_some() { usize::MAX } else { 500 };
-        let new_items = self.pull_stream(Stream::All, ot, max_items).await?;
-        let starred_items = self.pull_stream(Stream::Starred, None, 500).await?;
+        let pull_started = now();
+        let (new_items, all_updated) = self.pull_stream(Stream::All, ot, max_items).await?;
+        let (starred_items, starred_updated) = self.pull_stream(Stream::Starred, None, 500).await?;
         self.reconcile_read(&counts).await?;
         self.reconcile_starred().await?;
         let evicted = self.store.enforce_cache_budget(DEFAULT_CACHE_BYTES)?;
 
         let unread = self.store.total_unread()?;
         self.store.set_state("last_sync_at", &now().to_string())?;
-        self.store.set_state(
-            "newest_item_usec",
-            &self.store.newest_item_usec()?.to_string(),
-        )?;
+        let server_time = all_updated.or(starred_updated).filter(|time| *time > 0);
+        let next = (server_time.unwrap_or(pull_started) - WATERMARK_OVERLAP_SECONDS).max(0);
+        self.store.set_state("ot_watermark", &next.to_string())?;
 
         Ok(SyncReport {
             pushed_ops,
@@ -100,22 +102,26 @@ impl SyncEngine {
         stream: Stream,
         ot: Option<i64>,
         max_items: usize,
-    ) -> Result<usize> {
+    ) -> Result<(usize, Option<i64>)> {
         let mut continuation: Option<String> = None;
         let mut fetched = 0;
         let mut new_items = 0;
+        let mut updated = None;
         while fetched < max_items {
             let page = self
                 .client
                 .stream_contents(
                     &stream.api_id(),
-                    100,
+                    CONTENT_PAGE_SIZE,
                     None,
                     ot,
                     continuation.as_deref(),
                     None,
                 )
                 .await?;
+            if updated.is_none() {
+                updated = page.updated;
+            }
             if page.items.is_empty() {
                 break;
             }
@@ -128,7 +134,24 @@ impl SyncEngine {
                 _ => break,
             }
         }
-        Ok(new_items)
+        Ok((new_items, updated))
+    }
+
+    /// The next `ot` is the start of the last successful sync, not the newest item:
+    /// items modified after an old sync but before the newest item must not be skipped.
+    fn sync_watermark(&self) -> Result<Option<i64>> {
+        if let Some(value) = self.store.state("ot_watermark")?
+            && let Ok(value) = value.parse::<i64>()
+        {
+            return Ok(Some(value));
+        }
+        if let Some(value) = self.store.state("last_sync_at")?
+            && let Ok(value) = value.parse::<i64>()
+        {
+            return Ok(Some((value - WATERMARK_OVERLAP_SECONDS).max(0)));
+        }
+        let newest = self.store.newest_item_usec()?;
+        Ok((newest > 0).then_some((newest / 1_000_000 - WATERMARK_OVERLAP_SECONDS).max(0)))
     }
 
     /// Fetch the complete unread set when possible; otherwise leave local state alone.
@@ -344,7 +367,8 @@ mod tests {
                 "/api/greader.php/reader/api/0/stream/contents/user/-/state/com.google/reading-list",
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "items": [item_json(false)]
+                "items": [item_json(false)],
+                "updated": 1700000500
             })))
             .mount(&server)
             .await;
@@ -408,7 +432,7 @@ mod tests {
         assert!(
             last.url
                 .query_pairs()
-                .any(|(k, v)| k == "ot" && v == "1700000000")
+                .any(|(k, v)| k == "ot" && v == "1700000200")
         );
     }
 }

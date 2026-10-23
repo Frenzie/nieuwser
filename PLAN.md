@@ -61,7 +61,8 @@ Base URL is the server's API address, e.g. `https://freshrss.example.net/api/gre
 Gotchas:
 
 - `ot`/`nt` are seconds and bound the crawl time: use `ot` for items newer than the last sync,
-  `nt` only for upper-bound pagination. `timestampUsec` is microseconds; `mark-all-as-read` `ts`
+  `nt` only for upper-bound pagination. Store the server's `updated` time from `stream/contents`
+  as the next `ot` minus a short overlap; the newest item timestamp is not a safe watermark. `timestampUsec` is microseconds; `mark-all-as-read` `ts`
   is also microseconds (FreshRSS compares it with microsecond entry IDs).
 - Feeds belong to exactly one folder in FreshRSS.
 - IDs come in two forms: `stream/contents` returns
