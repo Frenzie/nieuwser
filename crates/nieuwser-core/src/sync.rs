@@ -239,7 +239,7 @@ impl SyncEngine {
         for op in mark_all {
             let stream = op.stream_id.as_deref().unwrap_or("");
             self.client
-                .mark_all_read(stream, op.ts_ns.unwrap_or(0))
+                .mark_all_read(stream, op.ts_us.unwrap_or(0))
                 .await?;
         }
 

@@ -62,7 +62,7 @@ Gotchas:
 
 - `ot`/`nt` are seconds and bound the crawl time: use `ot` for items newer than the last sync,
   `nt` only for upper-bound pagination. `timestampUsec` is microseconds; `mark-all-as-read` `ts`
-  is nanoseconds.
+  is also microseconds (FreshRSS compares it with microsecond entry IDs).
 - Feeds belong to exactly one folder in FreshRSS.
 - IDs come in two forms: `stream/contents` returns
   `tag:google.com,2005:reader/item/<16-hex>`, while `stream/items/ids` returns the same ID as a

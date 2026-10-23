@@ -317,12 +317,12 @@ impl Client {
         Ok(())
     }
 
-    pub async fn mark_all_read(&mut self, stream: &str, ts_ns: i64) -> Result<()> {
+    pub async fn mark_all_read(&mut self, stream: &str, ts_us: i64) -> Result<()> {
         self.write(
             "/reader/api/0/mark-all-as-read",
             vec![
                 ("s".into(), stream.into()),
-                ("ts".into(), ts_ns.to_string()),
+                ("ts".into(), ts_us.to_string()),
             ],
         )
         .await?;

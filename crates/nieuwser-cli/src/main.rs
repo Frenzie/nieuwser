@@ -99,8 +99,9 @@ async fn main() -> Result<()> {
         Command::MarkAllRead { stream } => {
             let stream = Stream::parse(&stream).context("unknown stream")?;
             let store = Store::open(&cli.db)?;
-            let ts_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as i64;
-            store.mark_all_read(&stream, ts_ns)?;
+            // FreshRSS compares mark-all-read timestamps with microsecond entry IDs.
+            let ts_us = SystemTime::now().duration_since(UNIX_EPOCH)?.as_micros() as i64;
+            store.mark_all_read(&stream, ts_us)?;
             println!("queued mark-all-read for {}", stream.api_id());
         }
     }

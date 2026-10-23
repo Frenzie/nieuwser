@@ -62,7 +62,7 @@ pub struct OutboxOp {
     pub item_id: Option<String>,
     pub stream_id: Option<String>,
     pub op: String,
-    pub ts_ns: Option<i64>,
+    pub ts_us: Option<i64>,
 }
 
 impl Store {
@@ -140,7 +140,7 @@ impl Store {
                 item_id     TEXT,
                 stream_id   TEXT,
                 op          TEXT NOT NULL,
-                ts_ns       INTEGER,
+                ts_us       INTEGER,
                 created_at  INTEGER NOT NULL,
                 attempts    INTEGER NOT NULL DEFAULT 0
             );
@@ -165,6 +165,30 @@ impl Store {
         )?;
         if has_auth_token == 0 {
             conn.execute("ALTER TABLE account ADD COLUMN auth_token TEXT", [])?;
+        }
+
+        // v0.1 sent mark-all-read timestamps in nanoseconds; FreshRSS compares
+        // them against microsecond entry IDs, so convert any queued operation.
+        let has_ts_us: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('outbox') WHERE name = 'ts_us'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_ts_us == 0 {
+            let has_ts_ns: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('outbox') WHERE name = 'ts_ns'",
+                [],
+                |row| row.get(0),
+            )?;
+            if has_ts_ns > 0 {
+                conn.execute_batch(
+                    "ALTER TABLE outbox RENAME COLUMN ts_ns TO ts_us;
+                     UPDATE outbox SET ts_us = ts_us / 1000
+                     WHERE op = 'mark_all_read' AND ts_us IS NOT NULL;",
+                )?;
+            } else {
+                conn.execute("ALTER TABLE outbox ADD COLUMN ts_us INTEGER", [])?;
+            }
         }
 
         let had_fts: i64 = conn.query_row(
@@ -769,7 +793,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn mark_all_read(&self, stream: &Stream, ts_ns: i64) -> Result<()> {
+    pub fn mark_all_read(&self, stream: &Stream, ts_us: i64) -> Result<()> {
         let (filter, values) = stream_where(stream);
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -785,9 +809,9 @@ impl Store {
             params_from_iter(values.iter()),
         )?;
         tx.execute(
-            "INSERT INTO outbox(stream_id, op, ts_ns, created_at)
+            "INSERT INTO outbox(stream_id, op, ts_us, created_at)
              VALUES (?1, 'mark_all_read', ?2, ?3)",
-            params![stream.api_id(), ts_ns, now()],
+            params![stream.api_id(), ts_us, now()],
         )?;
         tx.execute(
             "UPDATE feeds SET unread_count =
@@ -801,14 +825,14 @@ impl Store {
     pub fn outbox(&self, limit: i64) -> Result<Vec<OutboxOp>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, item_id, stream_id, op, ts_ns FROM outbox ORDER BY id LIMIT ?1")?;
+            .prepare("SELECT id, item_id, stream_id, op, ts_us FROM outbox ORDER BY id LIMIT ?1")?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(OutboxOp {
                 id: row.get(0)?,
                 item_id: row.get(1)?,
                 stream_id: row.get(2)?,
                 op: row.get(3)?,
-                ts_ns: row.get(4)?,
+                ts_us: row.get(4)?,
             })
         })?;
         let mut ops = Vec::new();
@@ -1146,6 +1170,48 @@ mod tests {
         assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
         assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
         assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
+    }
+
+    #[test]
+    fn queues_mark_all_read_in_microseconds() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+        store
+            .upsert_items(&[item("1", "feed/1", 1_000_000, false)])
+            .unwrap();
+
+        store
+            .mark_all_read(&Stream::All, 1_700_000_000_123_456)
+            .unwrap();
+        let ops = store.outbox(10).unwrap();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].op, "mark_all_read");
+        assert_eq!(ops[0].ts_us, Some(1_700_000_000_123_456));
+    }
+
+    #[test]
+    fn migrates_nanosecond_mark_all_read_outbox_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id TEXT,
+                stream_id TEXT,
+                op TEXT NOT NULL,
+                ts_ns INTEGER,
+                created_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO outbox(stream_id, op, ts_ns, created_at)
+            VALUES ('user/-/state/com.google/reading-list', 'mark_all_read', 1700000000000000000, 0);",
+        )
+        .unwrap();
+        let store = Store::from_connection(conn).unwrap();
+        let ops = store.outbox(10).unwrap();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].ts_us, Some(1_700_000_000_000_000));
     }
 
     #[test]

@@ -550,11 +550,12 @@ fn bind_callbacks(
             let Some(ui) = ui_weak.upgrade() else { return };
             let feed_index = ui.get_feed_index();
             let stream = current_stream(&state, feed_index);
-            let ts_ns = SystemTime::now()
+            // FreshRSS compares mark-all-read timestamps with microsecond entry IDs.
+            let ts_us = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos() as i64;
-            if let Err(error) = store.mark_all_read(&stream, ts_ns) {
+                .as_micros() as i64;
+            if let Err(error) = store.mark_all_read(&stream, ts_us) {
                 ui.set_status(format!("Update failed: {error}").into());
                 return;
             }
