@@ -19,6 +19,7 @@ const CONTENT_BATCH_SIZE: usize = 50;
 const INITIAL_SYNC_ITEMS: usize = 5_000;
 const INITIAL_STARRED_ITEMS: usize = 1_000;
 const BACKFILL_LIMIT: usize = 1_000;
+const MAX_PAGES_PER_STREAM: usize = 1_000;
 const TAG_READ: &str = "user/-/state/com.google/read";
 const TAG_STARRED: &str = "user/-/state/com.google/starred";
 const ITEM_TAG_PREFIX: &str = "tag:google.com,2005:reader/item/";
@@ -146,11 +147,13 @@ impl SyncEngine {
         max_items: usize,
     ) -> Result<(usize, Option<i64>)> {
         let mut continuation: Option<String> = None;
+        let mut seen_continuations = HashSet::new();
+        let mut pages = 0;
         let mut fetched = 0;
         let mut new_items = 0;
         let mut updated = None;
         let mut page_size = CONTENT_PAGE_SIZE;
-        while fetched < max_items {
+        while fetched < max_items && pages < MAX_PAGES_PER_STREAM {
             let page = loop {
                 match self
                     .client
@@ -178,9 +181,13 @@ impl SyncEngine {
                 break;
             }
             fetched += page.items.len();
+            pages += 1;
             new_items += self.store.upsert_items(&page.items)?;
             match page.continuation {
-                Some(next) if Some(&next) != continuation.as_ref() => {
+                Some(next)
+                    if Some(&next) != continuation.as_ref()
+                        && seen_continuations.insert(next.clone()) =>
+                {
                     continuation = Some(next);
                 }
                 _ => break,

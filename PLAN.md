@@ -76,6 +76,7 @@ Gotchas:
   an all-digit hex suffix. Match decimal IDs to local timestamps for reconciliation.
 - Always send `Content-Type: application/x-www-form-urlencoded` on writes.
 - Treat an empty `subscription/list` response as incomplete and never prune the local archive on it.
+- Stop continuation paging on a repeated token or after 1,000 pages.
 
 ## Data model
 
