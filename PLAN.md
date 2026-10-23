@@ -316,7 +316,7 @@ Working today:
   article images, persisted light/dark theme, restored window geometry, editable shortcuts and
   shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
   browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 24 core tests plus 5 app tests, covering API parsing/auth, reader blocks,
+- Tests: 33 core tests plus 9 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, and long-reader rendering.
@@ -327,6 +327,11 @@ Working today:
   restart, expired-token re-prompt, startup auto-sync, selection-preserving refresh, optional
   read-on-open, keyboard navigation, local search, on-demand article restore after cache
   eviction, rich rendering of headings, lists, links, tables, images, and cached feed icons.
+- Re-validated the 0.2.1 sync path against the same dev server (9 feeds, 157 items, 7 unread):
+  first sync 1.6 s, incremental sync 29 ms, unread and starred-only backfill, microsecond
+  mark-all cutoff semantics, modified-article pickup via the `ot` watermark, and star/unstar
+  round-trip passed; server state was restored. Dead-letter/permanent-4xx remains mock-only
+  because the dev server accepts malformed requests.
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
 
@@ -336,6 +341,12 @@ Recent changes (2026-10-23):
   dead-lettered operations, the server `updated` time is the incremental watermark, missing
   unread/starred contents are backfilled by ID, permanent 4xx pushes no longer block the outbox,
   and empty subscription responses cannot wipe the archive.
+- Added Ctrl+A select-all and Shift+Up/Down range selection in the article list, 2x HiDPI README
+  screenshots using a real CC BY article, and QtSvg-compatible icon assets; bumped the version
+  to 0.2.1.
+- Re-validated the sync path against the local FreshRSS dev server: incremental watermark,
+  unread/starred backfill, microsecond mark-all cutoff, modified-article pickup, and star/unstar
+  round-trip passed; dead-letter/permanent-4xx remains mock-only.
 - Made remote-ID reconciliation use indexed timestamp matches, skipped FTS reindexing for
   unchanged items, bounded adjacent-preview parsing, and throttled cache-budget checks after
   image fetches.
@@ -368,7 +379,8 @@ Recent changes (2026-10-22):
 
 Next up:
 
-1. Finish M5: large-account/soak testing, retry/offline edge cases, and an end-to-end release run.
+1. Finish M5: larger-account soak beyond the 157-item dev set, a live permanent-4xx/dead-letter
+   case, and an end-to-end release run.
 2. Exercise macOS and Windows packaging in CI.
 3. Platform-native styling, fonts, and menu integration.
 
