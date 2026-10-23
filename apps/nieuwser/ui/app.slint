@@ -303,6 +303,49 @@ component SelectionContext inherits ContextMenuArea {
     }
 }
 
+component NavHint inherits Rectangle {
+    in property <int> count;
+    in property <bool> up: false;
+
+    width: 210px;
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    drop-shadow-color: #00000030;
+    drop-shadow-blur: 8px;
+    drop-shadow-offset-y: 2px;
+
+    HorizontalLayout {
+        alignment: center;
+        cross-axis-alignment: center;
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 8px;
+
+        Text {
+            text: root.up ? "↑" : "↓";
+            color: Theme.accent;
+            font-size: 15px;
+            vertical-alignment: center;
+        }
+        for index in 3 : Rectangle {
+            width: 7px;
+            height: 7px;
+            border-radius: 3.5px;
+            background: index < root.count ? Theme.accent : Theme.border;
+            animate background { duration: 100ms; }
+        }
+        Text {
+            text: root.up ? "Previous article" : "Next article";
+            color: Theme.text-muted;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+}
+
 component ReaderSkeleton inherits Rectangle {
     background: Theme.surface;
 
@@ -452,7 +495,9 @@ export component MainWindow inherits Window {
     private property <bool> compact: false;
     in-out property <string> compact-page: "list";
     in-out property <bool> feed-drawer-open: false;
-    private property <int> space-presses: 0;
+    private property <bool> reader-active: !root.compact || root.compact-page == "reader";
+    private property <int> nav-presses: 0;
+    private property <bool> nav-up: false;
     private property <length> reader-swipe-x: 0px;
     private property <length> reader-swipe-y: 0px;
     private property <length> reader-gesture-start-content-y: 0px;
@@ -568,13 +613,13 @@ export component MainWindow inherits Window {
             root.reader-gesture-vertical = false;
         }
     }
-    changed article-index => { root.space-presses = 0; }
-    changed compact-page => { root.space-presses = 0; }
+    changed article-index => { root.nav-presses = 0; }
+    changed compact-page => { root.nav-presses = 0; }
 
-    Timer {
+    nav-timer := Timer {
         interval: 1s;
-        running: root.space-presses > 0;
-        triggered => { root.space-presses = 0; }
+        running: root.nav-presses > 0;
+        triggered => { root.nav-presses = 0; }
     }
 
     scroll-reader(delta) => {
@@ -585,6 +630,37 @@ export component MainWindow inherits Window {
 
     public function scroll-reader-to-top() {
         reader-scroll.content-y = 0px;
+    }
+
+    function nav-press(up: bool, delta: length) {
+        let at-boundary = up ? root.reader-at-top : root.reader-at-bottom;
+        if (!root.reader-active || !at-boundary) {
+            root.nav-presses = 0;
+            root.scroll-reader(delta);
+        } else {
+            if (root.nav-presses > 0 && root.nav-up != up) {
+                root.nav-presses = 0;
+            }
+            root.nav-up = up;
+            root.nav-presses += 1;
+            nav-timer.restart();
+            if (root.nav-presses >= 3) {
+                root.nav-presses = 0;
+                if (up) {
+                    if (root.article-index > 0) {
+                        root.prev-article();
+                    } else {
+                        root.scroll-reader(delta);
+                    }
+                } else if (root.article-index + 1 < root.articles.length) {
+                    root.next-article();
+                } else {
+                    root.scroll-reader(delta);
+                }
+            } else {
+                root.scroll-reader(delta);
+            }
+        }
     }
 
     public function open-shortcuts() {
@@ -622,8 +698,9 @@ export component MainWindow inherits Window {
         height: root.height;
 
         key-pressed(event) => {
-            if (event.text != " ") {
-                root.space-presses = 0;
+            if (event.text != " " && event.text != Key.PageDown && event.text != Key.PageUp
+                && event.text != Key.DownArrow && event.text != Key.UpArrow) {
+                root.nav-presses = 0;
             }
             if (root.settings-open) {
                 if (event.text == Key.Escape) {
@@ -642,32 +719,16 @@ export component MainWindow inherits Window {
                 root.return-to-list();
                 accept
             } else if (event.text == Key.PageDown) {
-                root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
+                root.nav-press(false, 0px - reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == " " && !event.modifiers.shift) {
-                if (root.compact && root.compact-page == "reader") {
-                    root.space-presses += 1;
-                    if (root.space-presses >= 3) {
-                        root.space-presses = 0;
-                        if (root.article-index + 1 < root.articles.length) {
-                            root.next-article();
-                        } else {
-                            root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
-                        }
-                    } else {
-                        root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
-                    }
-                    accept
-                } else {
-                    root.scroll-reader(0px - reader-scroll.visible-height * 0.9);
-                    accept
-                }
+                root.nav-press(false, 0px - reader-scroll.visible-height * 0.9);
+                accept
             } else if (event.text == Key.PageUp) {
-                root.scroll-reader(reader-scroll.visible-height * 0.9);
+                root.nav-press(true, reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == " " && event.modifiers.shift) {
-                root.space-presses = 0;
-                root.scroll-reader(reader-scroll.visible-height * 0.9);
+                root.nav-press(true, reader-scroll.visible-height * 0.9);
                 accept
             } else if (event.text == Key.Home) {
                 reader-scroll.content-y = 0px;
@@ -676,10 +737,10 @@ export component MainWindow inherits Window {
                 root.scroll-reader(0px - reader-scroll.content-height);
                 accept
             } else if (event.text == Key.DownArrow) {
-                root.scroll-reader(0px - 64px);
+                root.nav-press(false, 0px - 64px);
                 accept
             } else if (event.text == Key.UpArrow) {
-                root.scroll-reader(64px);
+                root.nav-press(true, 64px);
                 accept
             } else if ((event.text == root.shortcut-open
                     && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)
@@ -1216,6 +1277,12 @@ export component MainWindow inherits Window {
                             }
                         }
                         if root.reader-loading : ReaderSkeleton { }
+                        if root.nav-presses > 0 : NavHint {
+                            count: root.nav-presses;
+                            up: root.nav-up;
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 16px;
+                        }
                     }
                 }
                 }
@@ -1744,10 +1811,9 @@ export component MainWindow inherits Window {
 
                             VerticalLayout {
                                 spacing: 5px;
-                                HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll reader"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Space ×3"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next article (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll; ×3 at top/bottom for previous / next"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page; ×3 at edges for previous / next"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page; ×3 at edges for next / previous"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Swipe ↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next / previous at reader end (compact)"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }

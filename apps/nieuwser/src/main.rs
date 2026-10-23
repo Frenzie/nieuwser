@@ -2166,5 +2166,77 @@ mod reader_layout_tests {
         slint::platform::update_timers_and_animations();
         let compact_reader = ui.window().take_snapshot().unwrap();
         assert_ne!(compact_list.as_bytes(), compact_reader.as_bytes());
+
+        let next_calls = Rc::new(Cell::new(0));
+        ui.on_next_article({
+            let next_calls = next_calls.clone();
+            move || next_calls.set(next_calls.get() + 1)
+        });
+        let prev_calls = Rc::new(Cell::new(0));
+        ui.on_prev_article({
+            let prev_calls = prev_calls.clone();
+            move || prev_calls.set(prev_calls.get() + 1)
+        });
+        let key = |key: slint::platform::Key| slint::platform::WindowEvent::KeyPressed {
+            text: key.into(),
+        };
+        ui.set_article_index(50);
+        // The first scroll uses pre-layout metrics; relayout, then close the remaining gap.
+        ui.invoke_scroll_reader(-100_000.0);
+        let _ = ui.window().take_snapshot();
+        ui.invoke_scroll_reader(-100_000.0);
+        slint::platform::update_timers_and_animations();
+        let _ = ui.window().take_snapshot();
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::DownArrow));
+        slint::platform::update_timers_and_animations();
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::DownArrow));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(next_calls.get(), 0);
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::DownArrow));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(next_calls.get(), 1);
+
+        ui.set_article_index(50);
+        ui.invoke_scroll_reader(100_000.0);
+        slint::platform::update_timers_and_animations();
+        let _ = ui.window().take_snapshot();
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::UpArrow));
+        slint::platform::update_timers_and_animations();
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::UpArrow));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(prev_calls.get(), 0);
+        ui.window()
+            .dispatch_event(key(slint::platform::Key::UpArrow));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(prev_calls.get(), 1);
+
+        // Away from the matching edge, the same presses only scroll.
+        for _ in 0..3 {
+            ui.window()
+                .dispatch_event(key(slint::platform::Key::DownArrow));
+            slint::platform::update_timers_and_animations();
+        }
+        assert_eq!(next_calls.get(), 1);
+
+        // The regular layout responds even when compact-page still says "list".
+        ui.window().set_size(slint::PhysicalSize::new(1000, 800));
+        ui.set_compact_page("list".into());
+        ui.set_article_index(50);
+        ui.invoke_scroll_reader(-100_000.0);
+        let _ = ui.window().take_snapshot();
+        ui.invoke_scroll_reader(-100_000.0);
+        slint::platform::update_timers_and_animations();
+        let _ = ui.window().take_snapshot();
+        for _ in 0..3 {
+            ui.window()
+                .dispatch_event(key(slint::platform::Key::PageDown));
+            slint::platform::update_timers_and_animations();
+        }
+        assert_eq!(next_calls.get(), 2);
     }
 }

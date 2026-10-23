@@ -105,10 +105,12 @@ Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Esc` close settings,
 close the compact feed drawer, or return from the compact reader to the article list, and `?`
 opens the shortcut help. The five command keys are editable from Settings → Keyboard shortcuts;
-bindings are stored in SQLite. Reader/navigation keys are fixed. In the compact reader, swipe up
-at the bottom or down at the top to switch to the next/previous article with a live preview of
-the adjacent article, swipe right returns to the article list, and three quick Space presses
-advance to the next article.
+bindings are stored in SQLite. Reader/navigation keys are fixed. In both layouts, three quick
+presses of Space/`↓`/PageDown advance to the next article once the reader is at the bottom, and
+Shift+Space/`↑`/PageUp go to the previous one at the top. A progress hint appears while the
+gesture is counting; at the first/last article the presses fall back to scrolling. In the
+compact reader, swipe up at the bottom or down at the top to switch to the next/previous article
+with a live preview of the adjacent article, and swipe right returns to the article list.
 Double-clicking or middle-clicking an article row opens it in the browser; the reader toolbar
 also has a globe button for the selected article.
 Mark-read-on-open is optional in Settings (default on) for both the reader and "Open in browser".
@@ -203,7 +205,7 @@ Working today:
   article images, persisted light/dark theme, restored window geometry, editable shortcuts and
   shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
   browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 24 core tests plus 3 app tests, covering API parsing/auth, reader blocks,
+- Tests: 24 core tests plus 5 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, and long-reader rendering.
@@ -216,6 +218,14 @@ Working today:
   eviction, rich rendering of headings, lists, links, tables, images, and cached feed icons.
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
+
+Recent changes (2026-10-23):
+
+- Made remote-ID reconciliation use indexed timestamp matches, skipped FTS reindexing for
+  unchanged items, bounded adjacent-preview parsing, and throttled cache-budget checks after
+  image fetches.
+- Extended triple-press article navigation to the regular layout and to `↑`/`↓`/PageUp/PageDown,
+  gated at the reader's top/bottom like the swipe gesture, with a progress hint.
 
 Recent changes (2026-10-22):
 
