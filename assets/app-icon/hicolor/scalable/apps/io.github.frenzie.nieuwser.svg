@@ -28,9 +28,6 @@
     <pattern id="fineLines" width="34" height="12" patternUnits="userSpaceOnUse">
       <path d="M0 2H31 M0 5H27 M0 8H32 M0 11H22" stroke="#707478" stroke-width="0.75" opacity="0.56"/>
     </pattern>
-    <clipPath id="tile">
-      <rect width="768" height="768" rx="154"/>
-    </clipPath>
     <filter id="lift" x="-20%" y="-20%" width="140%" height="150%">
       <feGaussianBlur in="SourceAlpha" stdDeviation="9"/>
       <feOffset dy="9"/>
@@ -39,9 +36,8 @@
     </filter>
   </defs>
 
-  <g clip-path="url(#tile)">
-    <rect width="768" height="768" fill="url(#sky)"/>
-    <rect width="768" height="768" fill="url(#sunset)"/>
+  <rect width="768" height="768" rx="154" fill="url(#sky)"/>
+  <rect width="768" height="768" rx="154" fill="url(#sunset)"/>
 
     <g filter="url(#lift)" stroke-linejoin="round">
       <!-- Rear folded sheet and narrow beak-side plane -->
@@ -90,5 +86,4 @@
       <path d="M435 464 468 450 M439 472 472 458 M443 480 476 466 M447 488 480 474 M451 496 484 482" fill="none" stroke="#676d70" stroke-width="1" opacity="0.58"/>
       <path d="M431 525 499 555 453 532Z" fill="#fff" opacity="0.75"/>
     </g>
-  </g>
 </svg>
