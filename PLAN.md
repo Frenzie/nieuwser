@@ -177,6 +177,105 @@ Effort estimate: a launching APK with the current UI is roughly half a day to a 
 is installed; a usable mobile build is a few days; production background sync, signing, lifecycle
 handling, and device testing are materially more.
 
+## E-ink (assessed, deferred)
+
+Status: not started; assessed on 2026-10-23 from the code, Slint 1.18.1 sources, FBInk, Plato,
+and KOReader/koreader-base. No e-reader hardware, koxtoolchain, or cross targets are installed
+here, so this is not a verified build.
+
+Feasible: yes for Linux-based e-readers (Kobo, Kindle, PocketBook, Cervantes, reMarkable) with a
+custom Slint platform. Android-based e-readers are the easier route: use the Android section and
+let the OS handle refresh. "Swiftly" means low-latency page turns, not animations: partial e-ink
+updates are roughly A2 ~120 ms, DU ~260 ms, and GL16/GC16 ~450 ms; full flashes take seconds.
+
+Already suitable:
+
+- `nieuwser-core` is UI-agnostic, native Rust, and has no browser/webview dependency. The compact
+  single-pane layout already fits 6–8" screens.
+- Slint 1.18.1 has a software renderer with dirty-region output, RGB565/RGBA targets, and a
+  `/dev/fb0` display path (`i-slint-backend-linuxkms`, `SLINT_BACKEND_LINUXFB`, software renderer,
+  `SLINT_SCALE_FACTOR`). Our headless UI test already drives the UI through
+  `MinimalSoftwareWindow`.
+- FBInk handles Kobo/Kindle/PocketBook/Cervantes/reMarkable framebuffer quirks and exposes
+  `fbink_refresh_rect` with DU/A2/GL16/GC16 waveform modes plus input scanning; Rust bindings
+  exist (`fbink-sys`, `fbink-rs`). FBInk is GPLv3+, compatible with this GPL-3.0-or-later app.
+- Plato is a native Rust Kobo reader with its own framebuffer/input modules and update modes;
+  KOReader/koreader-base document the device matrix and waveform tuning.
+
+Blockers and required work:
+
+1. **E-ink refresh.** Slint's LinuxFB path only memcpy's into `/dev/fb0`; it never issues the
+   MXCFB/EPDC update ioctls, so Kobo/Kindle panels will not change. Take the dirty region returned
+   by `SoftwareRenderer::render`, blit it, and call FBInk (or the device ioctls) with the right
+   waveform. Prefer partial updates and run a periodic full GC16 to clear ghosting.
+2. **Input.** The LinuxKMS backend's libinput path uses udev (`new_with_udev`, seat0), which
+   e-readers do not run. Add evdev input (or libinput `new_from_path`), identify the touchscreen
+   with FBInk's `fbink_input_scan`, handle rotation/coordinate quirks, and map hardware page
+   buttons.
+3. **UI profile.** A 6" Kobo is ~1072 px wide at scale 1, so the `<900 px` compact breakpoint does
+   not fire; force compact mode. Add a DPI/scale pass (15 px text is tiny at 300 dpi), larger touch
+   targets, no hover/double-click dependence, and an on-screen keyboard for account setup (or
+   provision the token via the CLI/config). Hide the shortcut editor.
+4. **E-ink behavior.** Disable animations and live swipe previews, use page-based reader movement,
+   force a high-contrast light palette, and cap memory: the image cache can reach ~190 MB worst
+   case and the reader cache is desktop-sized. Use Gray8/RGB565 targets, skip Noto Emoji, and
+   bundle a text font (fontique otherwise links fontconfig).
+5. **Build/runtime.** Gate `arboard` (X11 clipboard) and `open_external`; bundle CA roots
+   (`webpki-roots`) because e-readers lack a platform store; test SQLite WAL on FAT32 (or put the
+   DB on ext4) and keep the rollback-journal fallback; there is no window manager, clipboard, or
+   browser.
+6. **Deployment.** Kobo: `/mnt/onboard/.adds/` + KFMon/NickelMenu (which stops Nickel); Kindle:
+   `/mnt/us` + KUAL; PocketBook has InkView quirks. Sync on launch; the 15-minute timer only runs
+   while the app is open.
+
+### Cross-compiling with koxtoolchain
+
+koxtoolchain is not Rust: it builds GCC/C toolchains with crosstool-NG. Rust supplies the target
+std; the toolchain supplies the linker, sysroot, and C compiler for bundled C dependencies
+(SQLite, FBInk, TLS). The e-ink platform backend must exist first; cross-compiling the current
+winit/X11 build will link libraries the device does not have.
+
+Kobo (ARMv7 hard-float), following Plato's proven settings:
+
+```sh
+git clone https://github.com/koreader/koxtoolchain
+cd koxtoolchain
+./gen-tc.sh kobo
+source refs/x-compile.sh kobo env bare   # adds ~/x-tools/arm-kobo-linux-gnueabihf/bin to PATH
+rustup target add arm-unknown-linux-gnueabihf
+export CC_arm_unknown_linux_gnueabihf=arm-kobo-linux-gnueabihf-gcc
+export AR_arm_unknown_linux_gnueabihf=arm-kobo-linux-gnueabihf-ar
+export CXX_arm_unknown_linux_gnueabihf=arm-kobo-linux-gnueabihf-g++
+cargo build --release -p nieuwser --target arm-unknown-linux-gnueabihf
+```
+
+Workspace `.cargo/config.toml`:
+
+```toml
+[target.arm-unknown-linux-gnueabihf]
+linker = "arm-kobo-linux-gnueabihf-gcc"
+rustflags = ["-C", "target-feature=+v7,+vfp3,+neon"]
+```
+
+Other families use their own TC prefixes: `kobov4`/`kobov5` →
+`arm-kobov4-linux-gnueabihf`/`arm-kobov5-linux-gnueabihf`; `kindlepw2` →
+`arm-kindlepw2-linux-gnueabi` (soft-float, so match it with a soft-float Rust target);
+`kindlehf` → `arm-kindlehf-linux-gnueabihf`; PocketBook and Cervantes have their own. Use `file`
+and `readelf -A`/`readelf -V` to verify the ABI and GLIBC symbols. Rust's prebuilt std needs
+glibc >= 2.17, so old Kindles may need a musl target or a std built with the TC sysroot
+(`-Z build-std`, nightly).
+
+Cargo snags: `libsqlite3-sys` bundled uses the `cc` crate (the `CC_<target>` variables above);
+`reqwest`'s default rustls provider is aws-lc-rs, which may need extra CMake/cross setup—prefer
+`rustls-no-provider` + `rustls`/ring if it fights back. Build FBInk as a static library with the
+same TC (`make static` with the env sourced, plus the right `KOBO`/`KINDLE` variable) and link it
+from a small `-sys` crate. Bundle CA roots. Test the binary with `readelf` before copying it to
+the device.
+
+Effort estimate: a weekend proves the framebuffer/refresh/input pipeline on one Kobo; a pleasant
+Kobo build is a few weeks; Kindle/PocketBook and polish are longer. Android e-readers are the
+shortest path if that device class is acceptable.
+
 ## Milestones
 
 - **M0 — scaffold/core:** workspace, API client, store, sync engine, CLI. *(done)*
@@ -226,6 +325,8 @@ Recent changes (2026-10-23):
   image fetches.
 - Extended triple-press article navigation to the regular layout and to `↑`/`↓`/PageUp/PageDown,
   gated at the reader's top/bottom like the swipe gesture, with a progress hint.
+- Assessed an e-ink port (custom Slint framebuffer backend, FBInk refresh, evdev input); see the
+  E-ink section.
 
 Recent changes (2026-10-22):
 
@@ -287,3 +388,6 @@ cargo run -p nieuwser
 - Multi-account and feed management timing.
 - Android support: assessed as feasible but deferred; see the Android section for blockers and a
   resume checklist. Decide whether to pursue it after M5.
+- E-ink support: assessed as feasible but deferred; see the E-ink section for blockers and the
+  koxtoolchain cross-compile sketch. Decide between a native Kobo build and Android e-readers
+  after M5.
