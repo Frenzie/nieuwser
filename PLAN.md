@@ -84,7 +84,8 @@ Gotchas:
 - `sync_state`: watermarks and timestamps.
 
 Local state changes update `items` and enqueue an outbox row in one transaction. Remote state
-pulled from the server updates `items` without enqueueing.
+pulled from the server updates `items` without enqueueing. A permanent 4xx push failure is
+dead-lettered so it cannot block later operations; the sync report shows the dead count.
 
 ## UI
 

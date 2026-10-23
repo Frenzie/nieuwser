@@ -19,6 +19,8 @@ const CONTENT_BATCH_SIZE: usize = 50;
 const INITIAL_SYNC_ITEMS: usize = 5_000;
 const INITIAL_STARRED_ITEMS: usize = 1_000;
 const BACKFILL_LIMIT: usize = 1_000;
+const TAG_READ: &str = "user/-/state/com.google/read";
+const TAG_STARRED: &str = "user/-/state/com.google/starred";
 
 #[derive(Debug, Default)]
 pub struct SyncReport {
@@ -26,6 +28,7 @@ pub struct SyncReport {
     pub new_items: usize,
     pub starred_items: usize,
     pub backfilled: usize,
+    pub failed_ops: i64,
     pub evicted: usize,
     pub feeds: usize,
     pub unread: i64,
@@ -41,6 +44,9 @@ impl fmt::Display for SyncReport {
         )?;
         if self.backfilled > 0 {
             write!(f, ", {} backfilled", self.backfilled)?;
+        }
+        if self.failed_ops > 0 {
+            write!(f, ", {} failed ops", self.failed_ops)?;
         }
         if self.evicted > 0 {
             write!(f, ", {} bodies evicted", self.evicted)?;
@@ -113,6 +119,7 @@ impl SyncEngine {
         let evicted = self.store.enforce_cache_budget(DEFAULT_CACHE_BYTES)?;
 
         let unread = self.store.total_unread()?;
+        let failed_ops = self.store.dead_outbox_count()?;
         self.store.set_state("last_sync_at", &now().to_string())?;
         let server_time = all_updated.or(starred_updated).filter(|time| *time > 0);
         let next = (server_time.unwrap_or(pull_started) - WATERMARK_OVERLAP_SECONDS).max(0);
@@ -123,6 +130,7 @@ impl SyncEngine {
             new_items,
             starred_items,
             backfilled,
+            failed_ops,
             evicted,
             feeds: subscriptions.len(),
             unread,
@@ -306,17 +314,71 @@ impl SyncEngine {
                 break;
             }
             let ids: Vec<i64> = ops.iter().map(|op| op.id).collect();
-            if let Err(error) = self.push_batch(&ops).await {
-                self.store.bump_ops(&ids)?;
-                return Err(error);
+            match self.push_batch(&ops).await {
+                Ok(()) => {
+                    self.store.remove_ops(&ids)?;
+                    pushed += ops.len();
+                }
+                Err(error) if is_permanent_error(&error) => {
+                    // A permanent 4xx must not block later operations, but a
+                    // batch can contain more than the failing operation. Retry
+                    // individually so only the bad operations are discarded.
+                    for op in &ops {
+                        match self.push_one(op).await {
+                            Ok(()) => {
+                                self.store.remove_ops(&[op.id])?;
+                                pushed += 1;
+                            }
+                            Err(error) if is_permanent_error(&error) => {
+                                self.store.dead_letter_ops(&[op.id])?;
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
             }
-            self.store.remove_ops(&ids)?;
-            pushed += ops.len();
             if ops.len() < 100 {
                 break;
             }
         }
         Ok(pushed)
+    }
+
+    async fn push_one(&mut self, op: &OutboxOp) -> Result<()> {
+        match op.op.as_str() {
+            "mark_all_read" => {
+                let stream = op.stream_id.as_deref().unwrap_or("");
+                self.client
+                    .mark_all_read(stream, op.ts_us.unwrap_or(0))
+                    .await
+            }
+            "read" => {
+                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
+                self.client
+                    .edit_tag(&[id], &["user/-/state/com.google/read"], &[])
+                    .await
+            }
+            "unread" => {
+                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
+                self.client
+                    .edit_tag(&[id], &[], &["user/-/state/com.google/read"])
+                    .await
+            }
+            "star" => {
+                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
+                self.client
+                    .edit_tag(&[id], &["user/-/state/com.google/starred"], &[])
+                    .await
+            }
+            "unstar" => {
+                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
+                self.client
+                    .edit_tag(&[id], &[], &["user/-/state/com.google/starred"])
+                    .await
+            }
+            _ => Ok(()),
+        }
     }
 
     async fn push_batch(&mut self, ops: &[OutboxOp]) -> Result<()> {
@@ -329,10 +391,10 @@ impl SyncEngine {
         }
 
         for (op_name, add, remove) in [
-            ("read", "user/-/state/com.google/read", ""),
-            ("unread", "", "user/-/state/com.google/read"),
-            ("star", "user/-/state/com.google/starred", ""),
-            ("unstar", "", "user/-/state/com.google/starred"),
+            ("read", TAG_READ, ""),
+            ("unread", "", TAG_READ),
+            ("star", TAG_STARRED, ""),
+            ("unstar", "", TAG_STARRED),
         ] {
             let ids: Vec<String> = ops
                 .iter()
@@ -349,6 +411,18 @@ impl SyncEngine {
         }
         Ok(())
     }
+}
+
+fn is_permanent_error(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Http { status, .. }
+            if status.is_client_error()
+                && *status != reqwest::StatusCode::UNAUTHORIZED
+                && *status != reqwest::StatusCode::FORBIDDEN
+                && *status != reqwest::StatusCode::REQUEST_TIMEOUT
+                && *status != reqwest::StatusCode::TOO_MANY_REQUESTS
+    )
 }
 
 fn is_response_limit_error(error: &Error) -> bool {
@@ -400,6 +474,25 @@ mod tests {
             "categories": categories,
             "origin": {"streamId": "feed/1", "title": "One"}
         })
+    }
+
+    #[test]
+    fn recognizes_permanent_errors() {
+        let http = |status| Error::Http {
+            status,
+            body: String::new(),
+        };
+        assert!(is_permanent_error(&http(reqwest::StatusCode::BAD_REQUEST)));
+        assert!(is_permanent_error(&http(
+            reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        )));
+        assert!(!is_permanent_error(&http(
+            reqwest::StatusCode::UNAUTHORIZED
+        )));
+        assert!(!is_permanent_error(&http(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        )));
+        assert!(!is_permanent_error(&Error::Other("offline".into())));
     }
 
     #[test]
@@ -533,5 +626,99 @@ mod tests {
                 .query_pairs()
                 .any(|(k, v)| k == "ot" && v == "1700000200")
         );
+    }
+
+    #[tokio::test]
+    async fn dead_letters_permanent_push_failures_and_continues() {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Auth=secret\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/subscription/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subscriptions": [{"id": "feed/1", "title": "One"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/tag/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"tags": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/unread-count"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "unreadcounts": [
+                    {"id": "feed/1", "count": 1},
+                    {"id": "user/-/state/com.google/reading-list", "count": 1}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        for stream in [
+            "user/-/state/com.google/reading-list",
+            "user/-/state/com.google/starred",
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/api/greader.php/reader/api/0/stream/contents/{stream}"
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "items": [],
+                    "updated": 1700000500
+                })))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
+            .and(query_param("s", "user/-/state/com.google/reading-list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemRefs": [{"id": "1"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
+            .and(query_param("s", "user/-/state/com.google/starred"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemRefs": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/reader/api/0/edit-tag"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .mount(&server)
+            .await;
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .reconcile_feeds(
+                &[crate::models::Subscription {
+                    id: "feed/1".into(),
+                    title: "One".into(),
+                    ..Default::default()
+                }],
+                &[],
+            )
+            .unwrap();
+        let item: crate::models::Item = serde_json::from_value(item_json(false)).unwrap();
+        store.upsert_items(&[item]).unwrap();
+        store.set_read(&["1".into()], true).unwrap();
+        let mut engine = SyncEngine::new(store.clone(), &base, "me", "pw")
+            .await
+            .unwrap();
+        let report = engine.sync().await.unwrap();
+
+        assert_eq!(report.failed_ops, 1);
+        assert_eq!(store.dead_outbox_count().unwrap(), 1);
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert!(!store.item("1").unwrap().unwrap().read);
     }
 }

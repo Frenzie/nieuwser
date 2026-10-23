@@ -14,6 +14,8 @@ pub struct Store {
 }
 
 pub const DEFAULT_CACHE_BYTES: u64 = 500 * 1024 * 1024;
+/// A permanent 4xx marks an operation dead so it cannot block later operations.
+pub const MAX_PUSH_ATTEMPTS: i64 = 3;
 
 #[derive(Debug, Clone)]
 pub struct FeedRow {
@@ -824,9 +826,11 @@ impl Store {
 
     pub fn outbox(&self, limit: i64) -> Result<Vec<OutboxOp>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT id, item_id, stream_id, op, ts_us FROM outbox ORDER BY id LIMIT ?1")?;
-        let rows = stmt.query_map(params![limit], |row| {
+        let mut stmt = conn.prepare(
+            "SELECT id, item_id, stream_id, op, ts_us FROM outbox
+                 WHERE attempts < ?2 ORDER BY id LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit, MAX_PUSH_ATTEMPTS], |row| {
             Ok(OutboxOp {
                 id: row.get(0)?,
                 item_id: row.get(1)?,
@@ -855,7 +859,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn bump_ops(&self, ids: &[i64]) -> Result<()> {
+    pub fn dead_letter_ops(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
@@ -863,12 +867,21 @@ impl Store {
         let tx = conn.transaction()?;
         for id in ids {
             tx.execute(
-                "UPDATE outbox SET attempts = attempts + 1 WHERE id = ?1",
-                params![id],
+                "UPDATE outbox SET attempts = ?2 WHERE id = ?1",
+                params![id, MAX_PUSH_ATTEMPTS],
             )?;
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn dead_outbox_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM outbox WHERE attempts >= ?1",
+            params![MAX_PUSH_ATTEMPTS],
+            |row| row.get(0),
+        )?)
     }
 
     /// The caller must ensure `remote_unread` is the complete unread set.
@@ -882,8 +895,9 @@ impl Store {
              AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)
              AND NOT EXISTS (SELECT 1 FROM outbox
                              WHERE outbox.item_id = items.id
-                               AND outbox.op IN ('read', 'unread'))",
-            [],
+                               AND outbox.op IN ('read', 'unread')
+                               AND outbox.attempts < ?1)",
+            params![MAX_PUSH_ATTEMPTS],
         )?;
         tx.execute(
             "UPDATE items SET read = 0 WHERE read = 1
@@ -891,8 +905,9 @@ impl Store {
                   OR timestamp_usec IN (SELECT ts FROM remote_timestamps))
              AND NOT EXISTS (SELECT 1 FROM outbox
                              WHERE outbox.item_id = items.id
-                               AND outbox.op IN ('read', 'unread'))",
-            [],
+                               AND outbox.op IN ('read', 'unread')
+                               AND outbox.attempts < ?1)",
+            params![MAX_PUSH_ATTEMPTS],
         )?;
         tx.commit()?;
         Ok(())
@@ -909,8 +924,9 @@ impl Store {
              AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)
              AND NOT EXISTS (SELECT 1 FROM outbox
                              WHERE outbox.item_id = items.id
-                               AND outbox.op IN ('star', 'unstar'))",
-            [],
+                               AND outbox.op IN ('star', 'unstar')
+                               AND outbox.attempts < ?1)",
+            params![MAX_PUSH_ATTEMPTS],
         )?;
         tx.execute(
             "UPDATE items SET starred = 1
@@ -918,8 +934,9 @@ impl Store {
                     OR timestamp_usec IN (SELECT ts FROM remote_timestamps))
                AND NOT EXISTS (SELECT 1 FROM outbox
                                WHERE outbox.item_id = items.id
-                                 AND outbox.op IN ('star', 'unstar'))",
-            [],
+                                 AND outbox.op IN ('star', 'unstar')
+                                 AND outbox.attempts < ?1)",
+            params![MAX_PUSH_ATTEMPTS],
         )?;
         tx.commit()?;
         Ok(())
@@ -1273,7 +1290,9 @@ mod tests {
         assert!(pending.starred);
 
         let op_ids: Vec<i64> = store.outbox(10).unwrap().iter().map(|op| op.id).collect();
-        store.remove_ops(&op_ids).unwrap();
+        store.dead_letter_ops(&op_ids).unwrap();
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert_eq!(store.dead_outbox_count().unwrap(), 2);
         store
             .reconcile_read_state(&HashSet::from(["1".to_string()]))
             .unwrap();
