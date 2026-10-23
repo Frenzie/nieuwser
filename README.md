@@ -4,6 +4,20 @@ A native, offline-first desktop client for [FreshRSS](https://freshrss.org), wri
 
 All business logic lives in a UI-agnostic core, so the Slint frontend can be replaced without touching sync or storage.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/wide.png" alt="Wide three-pane layout" width="900">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/compact.png" alt="Compact single-pane reader" width="360">
+</p>
+
+The open article is [“The web is bearable with RSS”](https://pluralistic.net/2026/03/07/reader-mode/)
+by Cory Doctorow, excerpted under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The surrounding feed list is illustrative demo data.
+
 ## Features
 
 - Three-pane reader: feed tree, article list, block-based reader view (no webview).
