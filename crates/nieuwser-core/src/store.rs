@@ -925,6 +925,40 @@ impl Store {
         Ok(())
     }
 
+    /// Returns remote IDs that are not in the local items table. FreshRSS reports
+    /// decimal IDs, which map to our microsecond timestamps; other servers may
+    /// report the same short IDs we store.
+    pub fn missing_remote_ids(&self, ids: &HashSet<String>) -> Result<Vec<String>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS wanted_ids (id TEXT PRIMARY KEY);
+             DELETE FROM wanted_ids;",
+        )?;
+        {
+            let mut insert = tx.prepare("INSERT OR IGNORE INTO wanted_ids(id) VALUES (?1)")?;
+            for id in ids {
+                insert.execute(params![id])?;
+            }
+        }
+        let missing = {
+            let mut stmt = tx.prepare(
+                "SELECT w.id FROM wanted_ids w
+                 WHERE NOT EXISTS (SELECT 1 FROM items i WHERE i.id = w.id)
+                   AND NOT EXISTS (SELECT 1 FROM items i
+                                   WHERE w.id NOT GLOB '*[^0-9]*'
+                                     AND i.timestamp_usec = CAST(w.id AS INTEGER))",
+            )?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<String>, _>>()?
+        };
+        tx.commit()?;
+        Ok(missing)
+    }
+
     pub fn newest_item_usec(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row(
@@ -1182,6 +1216,39 @@ mod tests {
         assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
         assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
         assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
+    }
+
+    #[test]
+    fn finds_remote_ids_missing_locally() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+        store
+            .upsert_items(&[
+                item("abc", "feed/1", 1_000_000, false),
+                item("def", "feed/1", 2_000_000, false),
+            ])
+            .unwrap();
+        let mut wanted = HashSet::from([
+            "abc".to_string(),
+            "2000000".to_string(),
+            "999".to_string(),
+            "tag:google.com,2005:reader/item/1234".to_string(),
+        ]);
+        let mut missing = store.missing_remote_ids(&wanted).unwrap();
+        missing.sort();
+        assert_eq!(
+            missing,
+            vec![
+                "999".to_string(),
+                "tag:google.com,2005:reader/item/1234".to_string()
+            ]
+        );
+
+        wanted.remove("999");
+        wanted.remove("tag:google.com,2005:reader/item/1234");
+        assert!(store.missing_remote_ids(&wanted).unwrap().is_empty());
     }
 
     #[test]

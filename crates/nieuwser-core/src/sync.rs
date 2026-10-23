@@ -3,10 +3,10 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::Result;
 use crate::api::Client;
 use crate::models::{Stream, UnreadCounts};
 use crate::store::{DEFAULT_CACHE_BYTES, OutboxOp, Store};
+use crate::{Error, Result};
 
 pub struct SyncEngine {
     client: Client,
@@ -14,13 +14,18 @@ pub struct SyncEngine {
 }
 
 const WATERMARK_OVERLAP_SECONDS: i64 = 5 * 60;
-const CONTENT_PAGE_SIZE: u32 = 100;
+const CONTENT_PAGE_SIZE: u32 = 500;
+const CONTENT_BATCH_SIZE: usize = 50;
+const INITIAL_SYNC_ITEMS: usize = 5_000;
+const INITIAL_STARRED_ITEMS: usize = 1_000;
+const BACKFILL_LIMIT: usize = 1_000;
 
 #[derive(Debug, Default)]
 pub struct SyncReport {
     pub pushed_ops: usize,
     pub new_items: usize,
     pub starred_items: usize,
+    pub backfilled: usize,
     pub evicted: usize,
     pub feeds: usize,
     pub unread: i64,
@@ -34,6 +39,9 @@ impl fmt::Display for SyncReport {
             "pushed {} ops, {} new items, {} starred, {} feeds, {} unread",
             self.pushed_ops, self.new_items, self.starred_items, self.feeds, self.unread
         )?;
+        if self.backfilled > 0 {
+            write!(f, ", {} backfilled", self.backfilled)?;
+        }
         if self.evicted > 0 {
             write!(f, ", {} bodies evicted", self.evicted)?;
         }
@@ -72,12 +80,36 @@ impl SyncEngine {
         self.store.set_unread_counts(&counts.unreadcounts)?;
 
         let ot = self.sync_watermark()?;
-        let max_items = if ot.is_some() { usize::MAX } else { 500 };
+        let max_items = if ot.is_some() {
+            usize::MAX
+        } else {
+            INITIAL_SYNC_ITEMS
+        };
         let pull_started = now();
         let (new_items, all_updated) = self.pull_stream(Stream::All, ot, max_items).await?;
-        let (starred_items, starred_updated) = self.pull_stream(Stream::Starred, None, 500).await?;
-        self.reconcile_read(&counts).await?;
-        self.reconcile_starred().await?;
+        let starred_max = if ot.is_some() {
+            usize::MAX
+        } else {
+            INITIAL_STARRED_ITEMS
+        };
+        let (starred_items, starred_updated) =
+            self.pull_stream(Stream::Starred, ot, starred_max).await?;
+        let unread_remote = self.reconcile_read(&counts).await?;
+        let starred_remote = self.reconcile_starred().await?;
+
+        // Organic pulls only cover new/modified items. State changes on older
+        // articles (and starred items beyond the initial window) need content
+        // fetched by ID.
+        let mut backfilled = 0;
+        if let Some(remote) = &starred_remote {
+            backfilled = self.backfill_missing(remote, BACKFILL_LIMIT).await?;
+        }
+        if let Some(remote) = &unread_remote {
+            let remaining = BACKFILL_LIMIT.saturating_sub(backfilled);
+            if remaining > 0 {
+                backfilled += self.backfill_missing(remote, remaining).await?;
+            }
+        }
         let evicted = self.store.enforce_cache_budget(DEFAULT_CACHE_BYTES)?;
 
         let unread = self.store.total_unread()?;
@@ -90,6 +122,7 @@ impl SyncEngine {
             pushed_ops,
             new_items,
             starred_items,
+            backfilled,
             evicted,
             feeds: subscriptions.len(),
             unread,
@@ -107,18 +140,28 @@ impl SyncEngine {
         let mut fetched = 0;
         let mut new_items = 0;
         let mut updated = None;
+        let mut page_size = CONTENT_PAGE_SIZE;
         while fetched < max_items {
-            let page = self
-                .client
-                .stream_contents(
-                    &stream.api_id(),
-                    CONTENT_PAGE_SIZE,
-                    None,
-                    ot,
-                    continuation.as_deref(),
-                    None,
-                )
-                .await?;
+            let page = loop {
+                match self
+                    .client
+                    .stream_contents(
+                        &stream.api_id(),
+                        page_size,
+                        None,
+                        ot,
+                        continuation.as_deref(),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(page) => break page,
+                    Err(error) if page_size > 100 && is_response_limit_error(&error) => {
+                        page_size = 100;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             if updated.is_none() {
                 updated = page.updated;
             }
@@ -135,6 +178,21 @@ impl SyncEngine {
             }
         }
         Ok((new_items, updated))
+    }
+
+    async fn backfill_missing(&self, remote: &HashSet<String>, limit: usize) -> Result<usize> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let mut missing = self.store.missing_remote_ids(remote)?;
+        missing.truncate(limit);
+        let mut fetched = 0;
+        for chunk in missing.chunks(CONTENT_BATCH_SIZE) {
+            let items = self.client.item_contents(chunk).await?;
+            fetched += items.len();
+            self.store.upsert_items(&items)?;
+        }
+        Ok(fetched)
     }
 
     /// The next `ot` is the start of the last successful sync, not the newest item:
@@ -155,14 +213,14 @@ impl SyncEngine {
     }
 
     /// Fetch the complete unread set when possible; otherwise leave local state alone.
-    async fn reconcile_read(&self, counts: &UnreadCounts) -> Result<()> {
+    async fn reconcile_read(&self, counts: &UnreadCounts) -> Result<Option<HashSet<String>>> {
         let server_total = counts
             .unreadcounts
             .iter()
             .find(|c| c.id == "user/-/state/com.google/reading-list")
             .map(|c| c.count);
         let Some(server_total) = server_total else {
-            return Ok(());
+            return Ok(None);
         };
 
         let mut remote = HashSet::new();
@@ -196,11 +254,13 @@ impl SyncEngine {
         }
         if complete && remote.len() as i64 >= server_total {
             self.store.reconcile_read_state(&remote)?;
+            Ok(Some(remote))
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 
-    async fn reconcile_starred(&self) -> Result<()> {
+    async fn reconcile_starred(&self) -> Result<Option<HashSet<String>>> {
         let mut remote = HashSet::new();
         let mut continuation: Option<String> = None;
         let mut complete = false;
@@ -232,8 +292,10 @@ impl SyncEngine {
         }
         if complete {
             self.store.reconcile_starred_state(&remote)?;
+            Ok(Some(remote))
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 
     async fn push_outbox(&mut self) -> Result<usize> {
@@ -289,6 +351,10 @@ impl SyncEngine {
     }
 }
 
+fn is_response_limit_error(error: &Error) -> bool {
+    matches!(error, Error::Other(message) if message.contains("response limit"))
+}
+
 fn short_id(id: &str) -> &str {
     id.rsplit('/').next().unwrap_or(id)
 }
@@ -308,20 +374,40 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn item_json(starred: bool) -> serde_json::Value {
+        item_json_with("1", starred, false, "1700000000123456")
+    }
+
+    fn item_json_with(
+        id: &str,
+        starred: bool,
+        read: bool,
+        timestamp_usec: &str,
+    ) -> serde_json::Value {
         let mut categories = Vec::new();
+        if read {
+            categories.push("user/-/state/com.google/read");
+        }
         if starred {
             categories.push("user/-/state/com.google/starred");
         }
         json!({
-            "id": "1",
-            "title": "Hello",
+            "id": id,
+            "title": format!("Item {id}"),
             "published": 1_700_000_000,
-            "timestampUsec": "1700000000123456",
-            "alternate": [{"href": "https://example.com/1"}],
+            "timestampUsec": timestamp_usec,
+            "alternate": [{"href": format!("https://example.com/{id}")}],
             "content": {"content": "<p>Body</p>"},
             "categories": categories,
             "origin": {"streamId": "feed/1", "title": "One"}
         })
+    }
+
+    #[test]
+    fn recognizes_response_limit_errors() {
+        assert!(is_response_limit_error(&Error::Other(
+            "greader response exceeded the 33554432-byte response limit".into()
+        )));
+        assert!(!is_response_limit_error(&Error::Other("offline".into())));
     }
 
     #[tokio::test]
@@ -393,7 +479,14 @@ mod tests {
             .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
             .and(query_param("s", "user/-/state/com.google/starred"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "itemRefs": [{"id": "1"}]
+                "itemRefs": [{"id": "1"}, {"id": "2"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/reader/api/0/stream/items/contents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [item_json_with("2", true, true, "1700000000000002")]
             })))
             .mount(&server)
             .await;
@@ -406,12 +499,17 @@ mod tests {
 
         assert_eq!(report.feeds, 1);
         assert_eq!(report.new_items, 1);
+        assert_eq!(report.backfilled, 1);
         assert_eq!(report.unread, 1);
         let items = store.items(&Stream::All, 10, 0, false, None).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].title, "Hello");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Item 1");
         assert!(!items[0].read);
         assert!(items[0].starred);
+        let backfilled = store.item("2").unwrap().unwrap();
+        assert_eq!(backfilled.title, "Item 2");
+        assert!(backfilled.read);
+        assert!(backfilled.starred);
         assert_eq!(
             store.feeds().unwrap()[0].folder_name.as_deref(),
             Some("News")
@@ -419,6 +517,7 @@ mod tests {
 
         let second = engine.sync().await.unwrap();
         assert_eq!(second.new_items, 0);
+        assert_eq!(second.backfilled, 0);
         let requests = server.received_requests().await.unwrap();
         let last = requests
             .iter()

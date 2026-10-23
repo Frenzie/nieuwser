@@ -53,17 +53,21 @@ Base URL is the server's API address, e.g. `https://freshrss.example.net/api/gre
    `unread-count?output=json`. `output=json` is mandatory.
 4. **Push before pull:** replay `outbox` via `edit-tag` (repeated `i=`, `a=`, `r=`) and
    `mark-all-as-read`.
-5. **Pull:** `stream/contents/{stream}?output=json&n=100&nt=<seconds>&c=<continuation>`.
-   `nt` is "newer than", in seconds. `continuation` anchors pagination.
+5. **Pull:** `stream/contents/{stream}?output=json&n=500&ot=<seconds>&c=<continuation>`.
+   `ot` is "newer than", in seconds; `nt` is only an upper bound. `continuation` anchors
+   pagination. Initial sync caps at 5,000 items; later syncs page until exhausted.
 6. **Reconcile:** fetch unread IDs (`stream/items/ids` + `xt=.../read`) and starred IDs, then
    update local state. Only reconcile when the fetched set is complete (not capped/truncated).
+   Then fetch contents for missing unread/starred IDs via `stream/items/contents` in batches of
+   50, capped at 1,000 per sync (starred first).
 
 Gotchas:
 
 - `ot`/`nt` are seconds and bound the crawl time: use `ot` for items newer than the last sync,
   `nt` only for upper-bound pagination. Store the server's `updated` time from `stream/contents`
-  as the next `ot` minus a short overlap; the newest item timestamp is not a safe watermark. `timestampUsec` is microseconds; `mark-all-as-read` `ts`
-  is also microseconds (FreshRSS compares it with microsecond entry IDs).
+  as the next `ot` minus a short overlap; the newest item timestamp is not a safe watermark.
+  `timestampUsec` is microseconds; `mark-all-as-read` `ts` is also microseconds (FreshRSS
+  compares it with microsecond entry IDs).
 - Feeds belong to exactly one folder in FreshRSS.
 - IDs come in two forms: `stream/contents` returns
   `tag:google.com,2005:reader/item/<16-hex>`, while `stream/items/ids` returns the same ID as a
