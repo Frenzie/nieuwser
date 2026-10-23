@@ -505,6 +505,25 @@ fn bind_callbacks(
 
     {
         let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_all(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let count = select_all_in_view(&state);
+                sync_article_rows(&ui, &state);
+                ui.set_status(
+                    if count == 0 {
+                        "No articles to select.".to_string()
+                    } else {
+                        format!("Selected {count} article(s)")
+                    }
+                    .into(),
+                );
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
         ui.on_load_more(move || {
@@ -522,7 +541,7 @@ fn bind_callbacks(
         let state = state.clone();
         ui.on_toggle_read(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let Some(item) = selected_item(&state, ui.get_article_index()) else {
+            let Some(item) = selected_item_or_first(&state, ui.get_article_index()) else {
                 return;
             };
             mark_selected_read(&ui, &store, &state, !item.read);
@@ -535,7 +554,7 @@ fn bind_callbacks(
         let state = state.clone();
         ui.on_toggle_star(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let Some(item) = selected_item(&state, ui.get_article_index()) else {
+            let Some(item) = selected_item_or_first(&state, ui.get_article_index()) else {
                 return;
             };
             mark_selected_starred(&ui, &store, &state, !item.starred);
@@ -1676,6 +1695,13 @@ fn apply_selection(state: &Arc<Mutex<UiState>>, index: i32, ctrl: bool, shift: b
     true
 }
 
+fn select_all_in_view(state: &Arc<Mutex<UiState>>) -> usize {
+    let mut state = state.lock().unwrap();
+    state.selected = state.items.iter().map(|item| item.id.clone()).collect();
+    state.anchor = state.items.first().map(|item| item.id.clone());
+    state.items.len()
+}
+
 fn context_selection(state: &Arc<Mutex<UiState>>, index: i32) -> bool {
     let mut state = state.lock().unwrap();
     let Some(item) = state.items.get(index.max(0) as usize) else {
@@ -1953,6 +1979,17 @@ fn selected_item(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemSummary>
         return None;
     }
     state.lock().unwrap().items.get(index as usize).cloned()
+}
+
+fn selected_item_or_first(state: &Arc<Mutex<UiState>>, index: i32) -> Option<ItemSummary> {
+    selected_item(state, index).or_else(|| {
+        let state = state.lock().unwrap();
+        state
+            .items
+            .iter()
+            .find(|item| state.selected.contains(&item.id))
+            .cloned()
+    })
 }
 
 fn current_stream(state: &Arc<Mutex<UiState>>, index: i32) -> Stream {
@@ -2309,5 +2346,71 @@ mod reader_layout_tests {
         let lists = list_calls.get();
         drag((100.0, 400.0), (320.0, 400.0));
         assert_eq!(list_calls.get(), lists + 1);
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use nieuwser_core::store::ItemSummary;
+
+    fn summary(id: &str) -> ItemSummary {
+        ItemSummary {
+            id: id.into(),
+            feed_id: "feed/1".into(),
+            feed_title: "Feed".into(),
+            title: format!("Article {id}"),
+            author: None,
+            published: 1_700_000_000,
+            href: None,
+            read: false,
+            starred: false,
+            timestamp_usec: 1_700_000_000_000_000,
+        }
+    }
+
+    #[test]
+    fn selects_every_loaded_item_in_the_current_view() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let state = Arc::new(Mutex::new(UiState {
+            streams: Vec::new(),
+            items: vec![summary("a"), summary("b"), summary("c")],
+            selected: HashSet::from(["old".to_string()]),
+            anchor: None,
+            handle: runtime.handle().clone(),
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+        }));
+
+        assert_eq!(select_all_in_view(&state), 3);
+        let state = state.lock().unwrap();
+        assert_eq!(
+            state.selected,
+            HashSet::from(["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+        assert_eq!(state.anchor.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn toggle_actions_fall_back_to_the_first_selected_item() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let state = Arc::new(Mutex::new(UiState {
+            streams: Vec::new(),
+            items: vec![summary("a"), summary("b")],
+            selected: HashSet::from(["b".to_string()]),
+            anchor: Some("b".to_string()),
+            handle: runtime.handle().clone(),
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+        }));
+
+        assert_eq!(selected_item_or_first(&state, -1).unwrap().id, "b");
+        assert_eq!(selected_item_or_first(&state, 1).unwrap().id, "b");
     }
 }

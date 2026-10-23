@@ -590,6 +590,7 @@ export component MainWindow inherits Window {
     callback set-selection-starred(bool);
     callback open-selection();
     callback copy-selection-links();
+    callback select-all();
     callback load-more();
     callback search(string);
     callback set-article-filter(string);
@@ -741,6 +742,11 @@ export component MainWindow inherits Window {
                 accept
             } else if (event.text == Key.UpArrow) {
                 root.nav-press(true, 64px);
+                accept
+            } else if (event.text == "a" && event.modifiers.control
+                && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta
+                && (!root.compact || (root.compact-page == "list" && !root.feed-drawer-open))) {
+                root.select-all();
                 accept
             } else if ((event.text == root.shortcut-open
                     && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)
@@ -1822,6 +1828,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }
                                 HorizontalLayout { Text { text: "?"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Show this help"; color: Theme.text-muted; font-size: 12px; } }
                             }

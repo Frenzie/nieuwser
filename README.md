@@ -30,9 +30,10 @@ The surrounding feed list is illustrative demo data.
 - SQLite cache with a ~500 MB budget for article bodies and media; unread/starred bodies are never evicted.
 - Local search, light/dark themes, and keyboard-first navigation (`j`/`k` for the next/previous
   article, `r`/`f` for read/star, `↑`/`↓`/`PageUp`/`PageDown`/`Space`/`Home`/`End` to scroll the
-  reader, `Esc` to close settings or the feed drawer / return to the article list in compact mode,
-  `?` for shortcut help). In the compact reader, swipe up at the bottom or down at the top to
-  switch articles with a live preview; swipe right to return to the list.
+  reader, `Ctrl+A` to select all articles in the current view, `Esc` to close settings or the feed
+  drawer / return to the article list in compact mode, `?` for shortcut help). In the compact
+  reader, swipe up at the bottom or down at the top to switch articles with a live preview;
+  swipe right to return to the list.
 - Customizable command keys for next/previous, read, star, and open-in-browser via
   Settings → Keyboard shortcuts.
 - Resizable panes in the wide layout (drag the dividers) and right-click menus for feeds and
