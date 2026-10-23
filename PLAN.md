@@ -327,6 +327,9 @@ Recent changes (2026-10-23):
   gated at the reader's top/bottom like the swipe gesture, with a progress hint.
 - Assessed an e-ink port (custom Slint framebuffer backend, FBInk refresh, evdev input); see the
   E-ink section.
+- Fixed compact-reader touch scrolling: the swipe handler pans the reader with relative drag
+  deltas and only shows article previews at the top/bottom edges, so mid-article drags no longer
+  jump or stall.
 
 Recent changes (2026-10-22):
 

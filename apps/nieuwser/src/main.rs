@@ -2177,6 +2177,11 @@ mod reader_layout_tests {
             let prev_calls = prev_calls.clone();
             move || prev_calls.set(prev_calls.get() + 1)
         });
+        let list_calls = Rc::new(Cell::new(0));
+        ui.on_return_to_list({
+            let list_calls = list_calls.clone();
+            move || list_calls.set(list_calls.get() + 1)
+        });
         let key = |key: slint::platform::Key| slint::platform::WindowEvent::KeyPressed {
             text: key.into(),
         };
@@ -2238,5 +2243,70 @@ mod reader_layout_tests {
             slint::platform::update_timers_and_animations();
         }
         assert_eq!(next_calls.get(), 2);
+
+        let drag = |from: (f32, f32), to: (f32, f32)| {
+            let pos = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerPressed {
+                    position: pos(from),
+                    button: slint::platform::PointerEventButton::Left,
+                });
+            for step in 1..=4 {
+                let progress = step as f32 / 4.0;
+                let x = from.0 + (to.0 - from.0) * progress;
+                let y = from.1 + (to.1 - from.1) * progress;
+                ui.window()
+                    .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                        position: pos((x, y)),
+                    });
+                slint::platform::update_timers_and_animations();
+            }
+            ui.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                    position: pos(to),
+                    button: slint::platform::PointerEventButton::Left,
+                });
+            slint::platform::update_timers_and_animations();
+        };
+
+        ui.window().set_size(slint::PhysicalSize::new(600, 700));
+        ui.set_compact_page("reader".into());
+        ui.set_article_index(50);
+
+        // A downward swipe at the top goes to the previous article.
+        ui.invoke_scroll_reader(100_000.0);
+        let _ = ui.window().take_snapshot();
+        let previous = prev_calls.get();
+        drag((300.0, 200.0), (300.0, 340.0));
+        assert_eq!(prev_calls.get(), previous + 1);
+
+        // An upward swipe at the bottom goes to the next article.
+        ui.invoke_scroll_reader(-100_000.0);
+        let _ = ui.window().take_snapshot();
+        ui.invoke_scroll_reader(-100_000.0);
+        let _ = ui.window().take_snapshot();
+        let upcoming = next_calls.get();
+        drag((300.0, 400.0), (300.0, 260.0));
+        assert_eq!(next_calls.get(), upcoming + 1);
+
+        // Away from the edges, the same drags scroll the reader instead.
+        ui.invoke_scroll_reader(100_000.0);
+        let _ = ui.window().take_snapshot();
+        ui.invoke_scroll_reader(-300.0);
+        let _ = ui.window().take_snapshot();
+        let before = ui.window().take_snapshot().unwrap();
+        let previous = prev_calls.get();
+        let upcoming = next_calls.get();
+        drag((300.0, 200.0), (300.0, 340.0));
+        let after = ui.window().take_snapshot().unwrap();
+        assert_ne!(before.as_bytes(), after.as_bytes());
+        drag((300.0, 400.0), (300.0, 260.0));
+        assert_eq!(prev_calls.get(), previous);
+        assert_eq!(next_calls.get(), upcoming);
+
+        // A right swipe returns to the list from anywhere in the reader.
+        let lists = list_calls.get();
+        drag((100.0, 400.0), (320.0, 400.0));
+        assert_eq!(list_calls.get(), lists + 1);
     }
 }

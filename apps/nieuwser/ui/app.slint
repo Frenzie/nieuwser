@@ -500,7 +500,7 @@ export component MainWindow inherits Window {
     private property <bool> nav-up: false;
     private property <length> reader-swipe-x: 0px;
     private property <length> reader-swipe-y: 0px;
-    private property <length> reader-gesture-start-content-y: 0px;
+    private property <length> reader-gesture-last-dy: 0px;
     private property <bool> reader-gesture-tracked: false;
     private property <bool> reader-gesture-horizontal: false;
     private property <bool> reader-gesture-vertical: false;
@@ -1321,12 +1321,14 @@ export component MainWindow inherits Window {
                         if (self.swiping) {
                             if (!root.reader-gesture-tracked) {
                                 root.reader-gesture-tracked = true;
-                                root.reader-gesture-start-content-y = reader-scroll.content-y;
+                                root.reader-gesture-last-dy = 0px;
                                 root.reader-gesture-at-top = root.reader-at-top;
                                 root.reader-gesture-at-bottom = root.reader-at-bottom;
                             }
                             let dx = self.current-position.x - self.pressed-position.x;
                             let dy = self.current-position.y - self.pressed-position.y;
+                            let delta = dy - root.reader-gesture-last-dy;
+                            root.reader-gesture-last-dy = dy;
                             if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
                                 if (abs(dx) > abs(dy)) {
                                     root.reader-gesture-horizontal = true;
@@ -1347,7 +1349,7 @@ export component MainWindow inherits Window {
                                 root.reader-swipe-y = 0px;
                                 reader-scroll.content-y = Math.max(
                                     reader-scroll.visible-height - reader-scroll.content-height,
-                                    Math.min(0px, root.reader-gesture-start-content-y + dy));
+                                    Math.min(0px, reader-scroll.content-y + delta));
                             }
                         }
                     }
@@ -1368,6 +1370,7 @@ export component MainWindow inherits Window {
                         root.reader-gesture-tracked = false;
                         root.reader-gesture-horizontal = false;
                         root.reader-gesture-vertical = false;
+                        root.reader-gesture-last-dy = 0px;
                     }
                     cancelled => {
                         root.reader-swipe-x = 0px;
@@ -1375,6 +1378,7 @@ export component MainWindow inherits Window {
                         root.reader-gesture-tracked = false;
                         root.reader-gesture-horizontal = false;
                         root.reader-gesture-vertical = false;
+                        root.reader-gesture-last-dy = 0px;
                     }
                 }
             }
