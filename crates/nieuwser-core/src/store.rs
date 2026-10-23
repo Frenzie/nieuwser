@@ -359,14 +359,19 @@ impl Store {
             )?;
         }
 
-        tx.execute(
-            "DELETE FROM feeds WHERE id NOT IN (SELECT id FROM seen_feeds)",
-            [],
-        )?;
-        tx.execute(
-            "DELETE FROM folders WHERE id NOT IN (SELECT id FROM seen_folders)",
-            [],
-        )?;
+        // A 200 with an empty subscription list would otherwise cascade away
+        // every feed and item. Only prune when the server returned at least one
+        // feed; an account with no subscriptions keeps its local archive.
+        if !subscriptions.is_empty() {
+            tx.execute(
+                "DELETE FROM feeds WHERE id NOT IN (SELECT id FROM seen_feeds)",
+                [],
+            )?;
+            tx.execute(
+                "DELETE FROM folders WHERE id NOT IN (SELECT id FROM seen_folders)",
+                [],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -1233,6 +1238,21 @@ mod tests {
         assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
         assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
         assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
+    }
+
+    #[test]
+    fn empty_subscription_list_does_not_delete_local_feeds() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+        store
+            .upsert_items(&[item("1", "feed/1", 1_000_000, false)])
+            .unwrap();
+
+        store.reconcile_feeds(&[], &[]).unwrap();
+        assert_eq!(store.feeds().unwrap().len(), 1);
+        assert!(store.item("1").unwrap().is_some());
     }
 
     #[test]

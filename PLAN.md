@@ -73,6 +73,7 @@ Gotchas:
   `tag:google.com,2005:reader/item/<16-hex>`, while `stream/items/ids` returns the same ID as a
   decimal. Use the hex suffix for local IDs and `edit-tag`; match decimal IDs for reconciliation.
 - Always send `Content-Type: application/x-www-form-urlencoded` on writes.
+- Treat an empty `subscription/list` response as incomplete and never prune the local archive on it.
 
 ## Data model
 
