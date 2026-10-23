@@ -969,7 +969,13 @@ impl Store {
         let missing = {
             let mut stmt = tx.prepare(
                 "SELECT w.id FROM wanted_ids w
-                 WHERE NOT EXISTS (SELECT 1 FROM items i WHERE i.id = w.id)
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM items i
+                     WHERE i.id = w.id
+                        OR i.id = replace(
+                            w.id, 'tag:google.com,2005:reader/item/', ''
+                        )
+                 )
                    AND NOT EXISTS (SELECT 1 FROM items i
                                    WHERE w.id NOT GLOB '*[^0-9]*'
                                      AND i.timestamp_usec = CAST(w.id AS INTEGER))",
@@ -1271,20 +1277,12 @@ mod tests {
             "abc".to_string(),
             "2000000".to_string(),
             "999".to_string(),
-            "tag:google.com,2005:reader/item/1234".to_string(),
+            "tag:google.com,2005:reader/item/abc".to_string(),
         ]);
-        let mut missing = store.missing_remote_ids(&wanted).unwrap();
-        missing.sort();
-        assert_eq!(
-            missing,
-            vec![
-                "999".to_string(),
-                "tag:google.com,2005:reader/item/1234".to_string()
-            ]
-        );
+        let missing = store.missing_remote_ids(&wanted).unwrap();
+        assert_eq!(missing, vec!["999".to_string()]);
 
         wanted.remove("999");
-        wanted.remove("tag:google.com,2005:reader/item/1234");
         assert!(store.missing_remote_ids(&wanted).unwrap().is_empty());
     }
 
