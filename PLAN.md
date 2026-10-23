@@ -330,6 +330,10 @@ Working today:
 
 Recent changes (2026-10-23):
 
+- Hardened sync: mark-all-read now uses microseconds, reconciliation respects queued and
+  dead-lettered operations, the server `updated` time is the incremental watermark, missing
+  unread/starred contents are backfilled by ID, permanent 4xx pushes no longer block the outbox,
+  and empty subscription responses cannot wipe the archive.
 - Made remote-ID reconciliation use indexed timestamp matches, skipped FTS reindexing for
   unchanged items, bounded adjacent-preview parsing, and throttled cache-budget checks after
   image fetches.
