@@ -879,13 +879,19 @@ impl Store {
         tx.execute(
             "UPDATE items SET read = 1 WHERE read = 0
              AND id NOT IN (SELECT id FROM remote_ids)
-             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)",
+             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)
+             AND NOT EXISTS (SELECT 1 FROM outbox
+                             WHERE outbox.item_id = items.id
+                               AND outbox.op IN ('read', 'unread'))",
             [],
         )?;
         tx.execute(
             "UPDATE items SET read = 0 WHERE read = 1
              AND (id IN (SELECT id FROM remote_ids)
-                  OR timestamp_usec IN (SELECT ts FROM remote_timestamps))",
+                  OR timestamp_usec IN (SELECT ts FROM remote_timestamps))
+             AND NOT EXISTS (SELECT 1 FROM outbox
+                             WHERE outbox.item_id = items.id
+                               AND outbox.op IN ('read', 'unread'))",
             [],
         )?;
         tx.commit()?;
@@ -900,13 +906,19 @@ impl Store {
         tx.execute(
             "UPDATE items SET starred = 0 WHERE starred = 1
              AND id NOT IN (SELECT id FROM remote_ids)
-             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)",
+             AND timestamp_usec NOT IN (SELECT ts FROM remote_timestamps)
+             AND NOT EXISTS (SELECT 1 FROM outbox
+                             WHERE outbox.item_id = items.id
+                               AND outbox.op IN ('star', 'unstar'))",
             [],
         )?;
         tx.execute(
             "UPDATE items SET starred = 1
-             WHERE id IN (SELECT id FROM remote_ids)
-                OR timestamp_usec IN (SELECT ts FROM remote_timestamps)",
+             WHERE (id IN (SELECT id FROM remote_ids)
+                    OR timestamp_usec IN (SELECT ts FROM remote_timestamps))
+               AND NOT EXISTS (SELECT 1 FROM outbox
+                               WHERE outbox.item_id = items.id
+                                 AND outbox.op IN ('star', 'unstar'))",
             [],
         )?;
         tx.commit()?;
@@ -1170,6 +1182,38 @@ mod tests {
         assert!(!items.iter().find(|i| i.id == "2").unwrap().read);
         assert!(!items.iter().find(|i| i.id == "1").unwrap().starred);
         assert!(items.iter().find(|i| i.id == "2").unwrap().starred);
+    }
+
+    #[test]
+    fn reconciliation_preserves_pending_state() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+            .unwrap();
+        store
+            .upsert_items(&[item("1", "feed/1", 1_000_000, false)])
+            .unwrap();
+        store.set_read(&["1".into()], true).unwrap();
+        store.set_starred(&["1".into()], true).unwrap();
+
+        // The server has not seen these queued changes yet.
+        store
+            .reconcile_read_state(&HashSet::from(["1".to_string()]))
+            .unwrap();
+        store.reconcile_starred_state(&HashSet::new()).unwrap();
+        let pending = store.item("1").unwrap().unwrap();
+        assert!(pending.read);
+        assert!(pending.starred);
+
+        let op_ids: Vec<i64> = store.outbox(10).unwrap().iter().map(|op| op.id).collect();
+        store.remove_ops(&op_ids).unwrap();
+        store
+            .reconcile_read_state(&HashSet::from(["1".to_string()]))
+            .unwrap();
+        store.reconcile_starred_state(&HashSet::new()).unwrap();
+        let reconciled = store.item("1").unwrap().unwrap();
+        assert!(!reconciled.read);
+        assert!(!reconciled.starred);
     }
 
     #[test]
