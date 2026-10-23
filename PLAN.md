@@ -295,8 +295,9 @@ shortest path if that device class is acceptable.
 - **M2 — offline writes:** read/star/mark-all, outbox replay, background sync. *(done)*
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(done)*
 - **M4 — content:** reader document IR, image cache, feed icons. *(done)*
-- **M5 — hardening:** large accounts, retries, packaging. *(packaging, search, security, and
-  reader performance done; stress/retry validation remains)*
+- **M5 — hardening:** large accounts, retries, packaging. *(packaging, search, security,
+  reader performance, a 10k-item soak, and the 0.2.1 live-server pass are done; forced-disconnect
+  retry and the end-to-end release run remain)*
 
 ## Current status
 
@@ -332,6 +333,9 @@ Working today:
   mark-all cutoff semantics, modified-article pickup via the `ot` watermark, and star/unstar
   round-trip passed; server state was restored. Dead-letter/permanent-4xx remains mock-only
   because the dev server accepts malformed requests.
+- Soak-tested a 10,000-item mock account (5,000 unread): initial sync 3.1 s, then 1,000/sync
+  backfill converged after five syncs (~1.8 s each) with a 15 MiB database and an empty outbox.
+  Built the 0.2.1 Linux AppImage, `.deb`, and tarball locally.
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
 
@@ -379,8 +383,8 @@ Recent changes (2026-10-22):
 
 Next up:
 
-1. Finish M5: larger-account soak beyond the 157-item dev set, a live permanent-4xx/dead-letter
-   case, and an end-to-end release run.
+1. Finish M5: forced-disconnect/retry testing, a live permanent-4xx/dead-letter case, and the
+   end-to-end release run (push plus macOS/Windows CI).
 2. Exercise macOS and Windows packaging in CI.
 3. Platform-native styling, fonts, and menu integration.
 
