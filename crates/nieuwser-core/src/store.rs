@@ -58,12 +58,44 @@ pub struct ItemRow {
     pub timestamp_usec: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpKind {
+    Read,
+    Unread,
+    Star,
+    Unstar,
+    MarkAllRead,
+}
+
+impl OpKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Unread => "unread",
+            Self::Star => "star",
+            Self::Unstar => "unstar",
+            Self::MarkAllRead => "mark_all_read",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "read" => Self::Read,
+            "unread" => Self::Unread,
+            "star" => Self::Star,
+            "unstar" => Self::Unstar,
+            "mark_all_read" => Self::MarkAllRead,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OutboxOp {
     pub id: i64,
     pub item_id: Option<String>,
     pub stream_id: Option<String>,
-    pub op: String,
+    pub op: OpKind,
     pub ts_us: Option<i64>,
 }
 
@@ -761,7 +793,7 @@ impl Store {
         }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let op = if read { "read" } else { "unread" };
+        let op = if read { OpKind::Read } else { OpKind::Unread };
         for id in ids {
             tx.execute(
                 "UPDATE items SET read = ?1 WHERE id = ?2",
@@ -773,7 +805,7 @@ impl Store {
             )?;
             tx.execute(
                 "INSERT INTO outbox(item_id, op, created_at) VALUES (?1, ?2, ?3)",
-                params![id, op, now()],
+                params![id, op.as_str(), now()],
             )?;
         }
         tx.commit()?;
@@ -786,7 +818,11 @@ impl Store {
         }
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let op = if starred { "star" } else { "unstar" };
+        let op = if starred {
+            OpKind::Star
+        } else {
+            OpKind::Unstar
+        };
         for id in ids {
             tx.execute(
                 "UPDATE items SET starred = ?1 WHERE id = ?2",
@@ -798,7 +834,7 @@ impl Store {
             )?;
             tx.execute(
                 "INSERT INTO outbox(item_id, op, created_at) VALUES (?1, ?2, ?3)",
-                params![id, op, now()],
+                params![id, op.as_str(), now()],
             )?;
         }
         tx.commit()?;
@@ -841,17 +877,28 @@ impl Store {
                  WHERE attempts < ?2 ORDER BY id LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit, MAX_PUSH_ATTEMPTS], |row| {
-            Ok(OutboxOp {
-                id: row.get(0)?,
-                item_id: row.get(1)?,
-                stream_id: row.get(2)?,
-                op: row.get(3)?,
-                ts_us: row.get(4)?,
-            })
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+            ))
         })?;
         let mut ops = Vec::new();
         for row in rows {
-            ops.push(row?);
+            let (id, item_id, stream_id, op, ts_us) = row?;
+            // Ops from a newer version stay queued instead of being guessed at or dropped.
+            let Some(op) = OpKind::parse(&op) else {
+                continue;
+            };
+            ops.push(OutboxOp {
+                id,
+                item_id,
+                stream_id,
+                op,
+                ts_us,
+            });
         }
         Ok(ops)
     }
@@ -1188,7 +1235,7 @@ mod tests {
         );
         let ops = store.outbox(10).unwrap();
         assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].op, "read");
+        assert_eq!(ops[0].op, OpKind::Read);
 
         store.remove_ops(&[ops[0].id]).unwrap();
         assert!(store.outbox(10).unwrap().is_empty());
@@ -1346,7 +1393,7 @@ mod tests {
             let store = Store::open(&path).unwrap();
             let ops = store.outbox(10).unwrap();
             assert_eq!(ops.len(), 1);
-            assert_eq!(ops[0].op, "read");
+            assert_eq!(ops[0].op, OpKind::Read);
             assert_eq!(ops[0].item_id.as_deref(), Some("1"));
         }
         std::fs::remove_dir_all(&dir).ok();
@@ -1367,7 +1414,7 @@ mod tests {
             .unwrap();
         let ops = store.outbox(10).unwrap();
         assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].op, "mark_all_read");
+        assert_eq!(ops[0].op, OpKind::MarkAllRead);
         assert_eq!(ops[0].ts_us, Some(1_700_000_000_123_456));
     }
 

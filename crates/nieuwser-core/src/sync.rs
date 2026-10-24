@@ -5,7 +5,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::api::Client;
 use crate::models::{Stream, UnreadCounts};
-use crate::store::{DEFAULT_CACHE_BYTES, OutboxOp, Store};
+use crate::store::{DEFAULT_CACHE_BYTES, OpKind, OutboxOp, Store};
 use crate::{Error, Result};
 
 pub struct SyncEngine {
@@ -357,43 +357,26 @@ impl SyncEngine {
     }
 
     async fn push_one(&mut self, op: &OutboxOp) -> Result<()> {
-        match op.op.as_str() {
-            "mark_all_read" => {
+        let id = || short_id(op.item_id.as_deref().unwrap_or("")).to_string();
+        match op.op {
+            OpKind::MarkAllRead => {
                 let stream = op.stream_id.as_deref().unwrap_or("");
                 self.client
                     .mark_all_read(stream, op.ts_us.unwrap_or(0))
                     .await
             }
-            "read" => {
-                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
-                self.client
-                    .edit_tag(&[id], &["user/-/state/com.google/read"], &[])
-                    .await
-            }
-            "unread" => {
-                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
-                self.client
-                    .edit_tag(&[id], &[], &["user/-/state/com.google/read"])
-                    .await
-            }
-            "star" => {
-                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
-                self.client
-                    .edit_tag(&[id], &["user/-/state/com.google/starred"], &[])
-                    .await
-            }
-            "unstar" => {
-                let id = short_id(op.item_id.as_deref().unwrap_or("")).to_string();
-                self.client
-                    .edit_tag(&[id], &[], &["user/-/state/com.google/starred"])
-                    .await
-            }
-            _ => Ok(()),
+            OpKind::Read => self.client.edit_tag(&[id()], &[TAG_READ], &[]).await,
+            OpKind::Unread => self.client.edit_tag(&[id()], &[], &[TAG_READ]).await,
+            OpKind::Star => self.client.edit_tag(&[id()], &[TAG_STARRED], &[]).await,
+            OpKind::Unstar => self.client.edit_tag(&[id()], &[], &[TAG_STARRED]).await,
         }
     }
 
     async fn push_batch(&mut self, ops: &[OutboxOp]) -> Result<()> {
-        let mark_all: Vec<&OutboxOp> = ops.iter().filter(|op| op.op == "mark_all_read").collect();
+        let mark_all: Vec<&OutboxOp> = ops
+            .iter()
+            .filter(|op| op.op == OpKind::MarkAllRead)
+            .collect();
         for op in mark_all {
             let stream = op.stream_id.as_deref().unwrap_or("");
             self.client
@@ -401,15 +384,15 @@ impl SyncEngine {
                 .await?;
         }
 
-        for (op_name, add, remove) in [
-            ("read", TAG_READ, ""),
-            ("unread", "", TAG_READ),
-            ("star", TAG_STARRED, ""),
-            ("unstar", "", TAG_STARRED),
+        for (kind, add, remove) in [
+            (OpKind::Read, TAG_READ, ""),
+            (OpKind::Unread, "", TAG_READ),
+            (OpKind::Star, TAG_STARRED, ""),
+            (OpKind::Unstar, "", TAG_STARRED),
         ] {
             let ids: Vec<String> = ops
                 .iter()
-                .filter(|op| op.op == op_name)
+                .filter(|op| op.op == kind)
                 .filter_map(|op| op.item_id.as_deref())
                 .map(canonical_item_id)
                 .collect();
