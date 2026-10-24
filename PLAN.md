@@ -346,6 +346,11 @@ Working today:
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
 
+Recent changes (2026-10-24):
+
+- Added session-scoped Ctrl+Z undo for explicit read/star actions and a confirmation dialog for
+  mark-all-read.
+
 Recent changes (2026-10-23):
 
 - Hardened sync: mark-all-read now uses microseconds, reconciliation respects queued and

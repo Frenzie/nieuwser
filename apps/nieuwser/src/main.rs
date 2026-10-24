@@ -712,6 +712,7 @@ fn bind_callbacks(
                 ui.set_status(format!("Update failed: {error}").into());
                 return;
             }
+            state.lock().unwrap().undo.clear();
             let _ = refresh_feeds(&ui, &store, &state);
             let _ = load_stream(&ui, &store, &state, feed_index);
             ui.set_status("Queued mark-all-read".into());
@@ -2672,6 +2673,13 @@ mod reader_layout_tests {
         let lists = list_calls.get();
         drag((100.0, 400.0), (320.0, 400.0));
         assert_eq!(list_calls.get(), lists + 1);
+
+        let before_confirm = ui.window().take_snapshot().unwrap();
+        ui.invoke_open_mark_all_confirm();
+        slint::platform::update_timers_and_animations();
+        let confirm = ui.window().take_snapshot().unwrap();
+        assert_ne!(before_confirm.as_bytes(), confirm.as_bytes());
+        ui.invoke_close_mark_all_confirm();
     }
 }
 

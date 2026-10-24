@@ -566,6 +566,7 @@ export component MainWindow inherits Window {
     in-out property <string> shortcut-star: "f";
     in-out property <string> shortcut-open: "o";
     in-out property <string> shortcuts-status;
+    private property <bool> mark-all-confirm-open: false;
     private property <bool> shortcuts-open: false;
     private property <string> capturing-shortcut;
     private property <length> shortcuts-dialog-width: min(560px, root.width - 32px);
@@ -683,6 +684,17 @@ export component MainWindow inherits Window {
         main-focus.focus();
     }
 
+    public function open-mark-all-confirm() {
+        root.menu-open = false;
+        root.mark-all-confirm-open = true;
+        mark-all-confirm.focus();
+    }
+
+    public function close-mark-all-confirm() {
+        root.mark-all-confirm-open = false;
+        main-focus.focus();
+    }
+
     public function reveal-article(index: int) {
         let row-y = index * 64px;
         let top = 0px - article-list.content-y;
@@ -705,7 +717,14 @@ export component MainWindow inherits Window {
                 && event.text != Key.DownArrow && event.text != Key.UpArrow) {
                 root.nav-presses = 0;
             }
-            if (root.settings-open) {
+            if (root.mark-all-confirm-open) {
+                if (event.text == Key.Escape) {
+                    root.close-mark-all-confirm();
+                    accept
+                } else {
+                    reject
+                }
+            } else if (root.settings-open) {
                 if (event.text == Key.Escape) {
                     root.close-settings();
                     accept
@@ -961,7 +980,7 @@ export component MainWindow inherits Window {
                             text: "Mark all read";
                             enabled: !root.settings-open;
                             clicked => {
-                                root.mark-all-read();
+                                root.open-mark-all-confirm();
                             }
                         }
                     }
@@ -1473,8 +1492,7 @@ export component MainWindow inherits Window {
                         text: "Mark all as read";
                         visible: root.menu-kind == 1;
                         activated => {
-                            root.menu-open = false;
-                            root.mark-all-read();
+                            root.open-mark-all-confirm();
                         }
                     }
                     MenuButton {
@@ -1554,6 +1572,82 @@ export component MainWindow inherits Window {
 
 
     }
+    mark-all-confirm := FocusScope {
+        visible: root.mark-all-confirm-open;
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-mark-all-confirm();
+                accept
+            } else {
+                reject
+            }
+        }
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            background: Theme.overlay;
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            Rectangle {
+                width: 420px;
+                height: 220px;
+                x: (parent.width - 420px) / 2;
+                y: (parent.height - 220px) / 2;
+                background: Theme.surface;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.settings-border;
+
+                VerticalLayout {
+                    padding: 24px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "Mark all articles read?";
+                        font-size: 20px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "Every article in the current view will be marked read on the server. This cannot be undone from Nieuwser.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        vertical-stretch: 1;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        Button {
+                            text: "Cancel";
+                            clicked => {
+                                root.close-mark-all-confirm();
+                            }
+                        }
+
+                        Button {
+                            text: "Mark all read";
+                            clicked => {
+                                root.close-mark-all-confirm();
+                                root.mark-all-read();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if root.settings-open : FocusScope {
         width: parent.width;
         height: parent.height;

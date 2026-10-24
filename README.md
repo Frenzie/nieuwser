@@ -38,6 +38,8 @@ The surrounding feed list is illustrative demo data.
   or the feed drawer / return to the article list in compact mode, `?` for shortcut help). In the compact
   reader, swipe up at the bottom or down at the top to switch articles with a live preview;
   swipe right to return to the list.
+- Mark all read asks for confirmation before queueing the server action; it cannot be undone
+  from Nieuwser.
 - Customizable command keys for next/previous, read, star, and open-in-browser via
   Settings → Keyboard shortcuts.
 - Resizable panes in the wide layout (drag the dividers) and right-click menus for feeds and
