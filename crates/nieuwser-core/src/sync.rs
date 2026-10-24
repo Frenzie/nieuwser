@@ -344,7 +344,10 @@ impl SyncEngine {
                         }
                     }
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // Transient failures keep every unsent operation for the next sync.
+                    return Err(error);
+                }
             }
             if ops.len() < 100 {
                 break;
@@ -460,8 +463,9 @@ fn now() -> i64 {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use wiremock::matchers::{method, path, query_param};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     fn item_json(starred: bool) -> serde_json::Value {
         item_json_with("1", starred, false, "1700000000123456")
@@ -490,6 +494,243 @@ mod tests {
             "categories": categories,
             "origin": {"streamId": "feed/1", "title": "One"}
         })
+    }
+
+    async fn mount_minimal_sync(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("token"))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/subscription/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subscriptions": [{"id": "feed/1", "title": "One"}]
+            })))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/tag/list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"tags": []})))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/greader.php/reader/api/0/unread-count"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "unreadcounts": [
+                    {"id": "feed/1", "count": 0},
+                    {"id": "user/-/state/com.google/reading-list", "count": 0}
+                ]
+            })))
+            .mount(server)
+            .await;
+        for stream in [
+            "user/-/state/com.google/reading-list",
+            "user/-/state/com.google/starred",
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/api/greader.php/reader/api/0/stream/contents/{stream}"
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "items": [],
+                    "updated": 1700000500
+                })))
+                .mount(server)
+                .await;
+        }
+        for stream in [
+            "user/-/state/com.google/reading-list",
+            "user/-/state/com.google/starred",
+        ] {
+            Mock::given(method("GET"))
+                .and(path("/api/greader.php/reader/api/0/stream/items/ids"))
+                .and(query_param("s", stream))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "itemRefs": []
+                })))
+                .mount(server)
+                .await;
+        }
+    }
+
+    async fn mount_edit_tag(server: &MockServer, statuses: Vec<u16>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/reader/api/0/edit-tag"))
+            .respond_with(move |_request: &Request| {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(statuses.get(call).copied().unwrap_or(200))
+            })
+            .mount(server)
+            .await;
+    }
+
+    fn store_with_read_op() -> Arc<Store> {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .reconcile_feeds(
+                &[crate::models::Subscription {
+                    id: "feed/1".into(),
+                    title: "One".into(),
+                    ..Default::default()
+                }],
+                &[],
+            )
+            .unwrap();
+        let item: crate::models::Item = serde_json::from_value(item_json(false)).unwrap();
+        store.upsert_items(&[item]).unwrap();
+        store.set_read(&["1".into()], true).unwrap();
+        store
+    }
+
+    async fn assert_transient_replay(first_status: u16, later_statuses: Vec<u16>) {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+        mount_minimal_sync(&server).await;
+        let mut statuses = vec![first_status];
+        statuses.extend(later_statuses);
+        mount_edit_tag(&server, statuses).await;
+
+        let store = store_with_read_op();
+        let mut engine = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        let error = engine.sync().await.unwrap_err();
+        assert!(matches!(
+            error,
+            Error::Http { status, .. } if status.as_u16() == first_status
+        ));
+        assert_eq!(store.outbox(10).unwrap().len(), 1);
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+
+        let mut retry = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        let report = retry.sync().await.unwrap();
+        assert_eq!(report.pushed_ops, 1);
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn retains_ops_after_transient_server_errors_and_replays() {
+        assert_transient_replay(503, vec![200]).await;
+        assert_transient_replay(429, vec![200]).await;
+    }
+
+    #[tokio::test]
+    async fn retains_ops_after_auth_failure_and_replays() {
+        // Client::write retries once with a fresh CSRF token on 401.
+        assert_transient_replay(401, vec![401, 200]).await;
+    }
+
+    #[tokio::test]
+    async fn retains_successful_ops_when_a_later_op_in_the_batch_fails() {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+        mount_minimal_sync(&server).await;
+        mount_edit_tag(&server, vec![200, 503, 200, 200]).await;
+
+        let store = store_with_read_op();
+        store.set_starred(&["1".into()], true).unwrap();
+        assert_eq!(store.outbox(10).unwrap().len(), 2);
+
+        let mut failed = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        assert!(failed.sync().await.is_err());
+        assert_eq!(store.outbox(10).unwrap().len(), 2);
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+
+        let mut retry = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        let report = retry.sync().await.unwrap();
+        assert_eq!(report.pushed_ops, 2);
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn retains_ops_after_network_failure_and_replays() {
+        let store = store_with_read_op();
+        let mut failed = SyncEngine::with_auth(
+            store.clone(),
+            "http://127.0.0.1:1/api/greader.php",
+            "secret",
+        )
+        .unwrap();
+        assert!(failed.sync().await.is_err());
+        assert_eq!(store.outbox(10).unwrap().len(), 1);
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+        mount_minimal_sync(&server).await;
+        mount_edit_tag(&server, vec![200]).await;
+        let mut retry = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        let report = retry.sync().await.unwrap();
+        assert_eq!(report.pushed_ops, 1);
+        assert!(store.outbox(10).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn retains_mark_all_ops_and_their_timestamp_after_transient_failure() {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+        mount_minimal_sync(&server).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("POST"))
+            .and(path("/api/greader.php/reader/api/0/mark-all-as-read"))
+            .respond_with({
+                let calls = calls.clone();
+                move |_request: &Request| {
+                    let call = calls.fetch_add(1, Ordering::SeqCst);
+                    ResponseTemplate::new(if call == 0 { 503 } else { 200 })
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .reconcile_feeds(
+                &[crate::models::Subscription {
+                    id: "feed/1".into(),
+                    title: "One".into(),
+                    ..Default::default()
+                }],
+                &[],
+            )
+            .unwrap();
+        let item: crate::models::Item = serde_json::from_value(item_json(false)).unwrap();
+        store.upsert_items(&[item]).unwrap();
+        store
+            .mark_all_read(&Stream::All, 1_700_000_000_123_456)
+            .unwrap();
+
+        let mut failed = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        assert!(failed.sync().await.is_err());
+        assert_eq!(store.outbox(10).unwrap().len(), 1);
+        assert_eq!(store.dead_outbox_count().unwrap(), 0);
+
+        let mut retry = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        let report = retry.sync().await.unwrap();
+        assert_eq!(report.pushed_ops, 1);
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert!(store.item("1").unwrap().unwrap().read);
+
+        let requests = server.received_requests().await.unwrap();
+        let request = requests
+            .iter()
+            .rev()
+            .find(|request| {
+                request
+                    .url
+                    .path()
+                    .ends_with("/reader/api/0/mark-all-as-read")
+            })
+            .unwrap();
+        let form: Vec<(String, String)> = url::form_urlencoded::parse(&request.body)
+            .into_owned()
+            .collect();
+        assert!(
+            form.iter()
+                .any(|(key, value)| key == "ts" && value == "1700000000123456")
+        );
     }
 
     #[test]

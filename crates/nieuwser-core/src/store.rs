@@ -1321,6 +1321,33 @@ mod tests {
     }
 
     #[test]
+    fn retains_outbox_rows_across_reopen() {
+        let dir =
+            std::env::temp_dir().join(format!("nieuwser-outbox-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .reconcile_feeds(&[subscription("feed/1", "One", None)], &[])
+                .unwrap();
+            store
+                .upsert_items(&[item("1", "feed/1", 1_000_000, false)])
+                .unwrap();
+            store.set_read(&["1".into()], true).unwrap();
+            assert_eq!(store.outbox(10).unwrap().len(), 1);
+        }
+        {
+            let store = Store::open(&path).unwrap();
+            let ops = store.outbox(10).unwrap();
+            assert_eq!(ops.len(), 1);
+            assert_eq!(ops[0].op, "read");
+            assert_eq!(ops[0].item_id.as_deref(), Some("1"));
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn queues_mark_all_read_in_microseconds() {
         let store = Store::open_in_memory().unwrap();
         store
