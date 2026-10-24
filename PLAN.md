@@ -296,8 +296,8 @@ shortest path if that device class is acceptable.
 - **M3 — polish:** keyboard, search, themes, settings/onboarding, cache budget. *(done)*
 - **M4 — content:** reader document IR, image cache, feed icons. *(done)*
 - **M5 — hardening:** large accounts, retries, packaging. *(packaging, search, security,
-  reader performance, a 10k-item soak, and the 0.2.1 live-server pass are done; forced-disconnect
-  retry and the end-to-end release run remain)*
+  reader performance, a 10k-item soak, the 0.2.1 live-server pass, and transient outbox retention
+  tests are done; a live permanent-4xx/dead-letter case and the end-to-end release run remain)*
 
 ## Current status
 
@@ -317,7 +317,7 @@ Working today:
   article images, persisted light/dark theme, restored window geometry, editable shortcuts and
   shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
   browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 33 core tests plus 9 app tests, covering API parsing/auth, reader blocks,
+- Tests: 39 core tests plus 9 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, and long-reader rendering.
@@ -351,6 +351,9 @@ Recent changes (2026-10-23):
 - Re-validated the sync path against the local FreshRSS dev server: incremental watermark,
   unread/starred backfill, microsecond mark-all cutoff, modified-article pickup, and star/unstar
   round-trip passed; dead-letter/permanent-4xx remains mock-only.
+- Added outbox-retention regressions: 503/429/401/network failures and a late failure in a
+  multi-op batch leave every unsent operation intact for replay, queued rows survive a database
+  reopen, and mark-all timestamps survive the retry.
 - Made remote-ID reconciliation use indexed timestamp matches, skipped FTS reindexing for
   unchanged items, bounded adjacent-preview parsing, and throttled cache-budget checks after
   image fetches.
@@ -383,8 +386,8 @@ Recent changes (2026-10-22):
 
 Next up:
 
-1. Finish M5: forced-disconnect/retry testing, a live permanent-4xx/dead-letter case, and the
-   end-to-end release run (push plus macOS/Windows CI).
+1. Finish M5: a live permanent-4xx/dead-letter case and the end-to-end release run (push plus
+   macOS/Windows CI).
 2. Exercise macOS and Windows packaging in CI.
 3. Platform-native styling, fonts, and menu integration.
 
