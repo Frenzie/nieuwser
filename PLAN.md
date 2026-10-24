@@ -324,7 +324,7 @@ Working today:
   article images, persisted light/dark theme, restored window geometry, editable shortcuts and
   shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
   browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 39 core tests plus 13 app tests, covering API parsing/auth, reader blocks,
+- Tests: 39 core tests plus 16 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, and long-reader rendering.

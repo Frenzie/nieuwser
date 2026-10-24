@@ -33,6 +33,38 @@ struct UiState {
     handle: tokio::runtime::Handle,
     pending_icons: HashSet<String>,
     pending_media: HashSet<String>,
+    undo: VecDeque<UndoAction>,
+}
+
+#[derive(Debug)]
+struct ReadChange {
+    id: String,
+    was_read: bool,
+}
+
+#[derive(Debug)]
+struct StarChange {
+    id: String,
+    was_starred: bool,
+}
+
+#[derive(Debug)]
+enum UndoAction {
+    Read(Vec<ReadChange>),
+    Starred(Vec<StarChange>),
+}
+
+impl UndoAction {
+    fn len(&self) -> usize {
+        match self {
+            Self::Read(changes) => changes.len(),
+            Self::Starred(changes) => changes.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -43,6 +75,7 @@ const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
 const READER_CACHE_LIMIT: usize = 24;
+const UNDO_LIMIT: usize = 20;
 const PREVIEW_HTML_BYTES: usize = 16 * 1024;
 const MIN_WINDOW_WIDTH: f32 = 560.0;
 const MIN_WINDOW_HEIGHT: f32 = 480.0;
@@ -89,6 +122,7 @@ fn main() -> Result<()> {
         handle: runtime.handle().clone(),
         pending_icons: HashSet::new(),
         pending_media: HashSet::new(),
+        undo: VecDeque::new(),
     }));
 
     refresh_feeds(&ui, &store, &state)?;
@@ -647,6 +681,17 @@ fn bind_callbacks(
                 return;
             };
             mark_selected_starred(&ui, &store, &state, !item.starred);
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_undo(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                undo_last(&ui, &store, &state);
+            }
         });
     }
 
@@ -1928,6 +1973,109 @@ fn mark_item_read(
     Ok(())
 }
 
+fn read_changes(state: &Arc<Mutex<UiState>>, ids: &[String], read: bool) -> Vec<ReadChange> {
+    let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    state
+        .lock()
+        .unwrap()
+        .items
+        .iter()
+        .filter(|item| ids.contains(item.id.as_str()) && item.read != read)
+        .map(|item| ReadChange {
+            id: item.id.clone(),
+            was_read: item.read,
+        })
+        .collect()
+}
+
+fn star_changes(state: &Arc<Mutex<UiState>>, ids: &[String], starred: bool) -> Vec<StarChange> {
+    let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    state
+        .lock()
+        .unwrap()
+        .items
+        .iter()
+        .filter(|item| ids.contains(item.id.as_str()) && item.starred != starred)
+        .map(|item| StarChange {
+            id: item.id.clone(),
+            was_starred: item.starred,
+        })
+        .collect()
+}
+
+fn record_undo(state: &Arc<Mutex<UiState>>, action: UndoAction) {
+    if action.is_empty() {
+        return;
+    }
+    let mut state = state.lock().unwrap();
+    state.undo.push_back(action);
+    while state.undo.len() > UNDO_LIMIT {
+        state.undo.pop_front();
+    }
+}
+
+fn undo_last(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) {
+    let action = state.lock().unwrap().undo.pop_back();
+    let Some(action) = action else {
+        ui.set_status("Nothing to undo.".into());
+        return;
+    };
+    let result = match &action {
+        UndoAction::Read(changes) => restore_read(ui, store, state, changes),
+        UndoAction::Starred(changes) => restore_starred(ui, store, state, changes),
+    };
+    match result {
+        Ok(()) => {
+            ui.set_status(format!("Undid last change for {} article(s).", action.len()).into())
+        }
+        Err(error) => {
+            state.lock().unwrap().undo.push_back(action);
+            ui.set_status(format!("Undo failed: {error}").into());
+        }
+    }
+}
+
+fn restore_read(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    changes: &[ReadChange],
+) -> Result<(), String> {
+    let mut read = Vec::new();
+    let mut unread = Vec::new();
+    for change in changes {
+        if change.was_read {
+            read.push(change.id.clone());
+        } else {
+            unread.push(change.id.clone());
+        }
+    }
+    set_items_read(ui, store, state, &read, true)?;
+    set_items_read(ui, store, state, &unread, false)?;
+    Ok(())
+}
+
+fn restore_starred(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    changes: &[StarChange],
+) -> Result<(), String> {
+    let mut starred = Vec::new();
+    let mut unstarred = Vec::new();
+    for change in changes {
+        if change.was_starred {
+            starred.push(change.id.clone());
+        } else {
+            unstarred.push(change.id.clone());
+        }
+    }
+    set_items_starred(store, state, &starred, true)?;
+    set_items_starred(store, state, &unstarred, false)?;
+    sync_article_rows(ui, state);
+    Ok(())
+}
+
 fn mark_selected_read(
     ui: &MainWindow,
     store: &Arc<Store>,
@@ -1938,14 +2086,20 @@ fn mark_selected_read(
     if ids.is_empty() {
         return;
     }
-    if let Err(error) = set_items_read(ui, store, state, &ids, read) {
+    let changes = read_changes(state, &ids, read);
+    if changes.is_empty() {
+        return;
+    }
+    let changed_ids: Vec<String> = changes.iter().map(|change| change.id.clone()).collect();
+    if let Err(error) = set_items_read(ui, store, state, &changed_ids, read) {
         ui.set_status(format!("Update failed: {error}").into());
         return;
     }
+    record_undo(state, UndoAction::Read(changes));
     ui.set_status(
         format!(
             "Marked {} article(s) {} (queued)",
-            ids.len(),
+            changed_ids.len(),
             if read { "read" } else { "unread" }
         )
         .into(),
@@ -1990,6 +2144,28 @@ fn set_items_read(
     Ok(())
 }
 
+fn set_items_starred(
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    ids: &[String],
+    starred: bool,
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    store
+        .set_starred(ids, starred)
+        .map_err(|error| error.to_string())?;
+    let id_set: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut state = state.lock().unwrap();
+    for item in &mut state.items {
+        if id_set.contains(item.id.as_str()) {
+            item.starred = starred;
+        }
+    }
+    Ok(())
+}
+
 fn mark_selected_starred(
     ui: &MainWindow,
     store: &Arc<Store>,
@@ -2000,24 +2176,22 @@ fn mark_selected_starred(
     if ids.is_empty() {
         return;
     }
-    if let Err(error) = store.set_starred(&ids, starred) {
+    let changes = star_changes(state, &ids, starred);
+    if changes.is_empty() {
+        return;
+    }
+    let changed_ids: Vec<String> = changes.iter().map(|change| change.id.clone()).collect();
+    if let Err(error) = set_items_starred(store, state, &changed_ids, starred) {
         ui.set_status(format!("Update failed: {error}").into());
         return;
     }
-    {
-        let mut state = state.lock().unwrap();
-        for item in &mut state.items {
-            if ids.contains(&item.id) {
-                item.starred = starred;
-            }
-        }
-    }
     sync_article_rows(ui, state);
+    record_undo(state, UndoAction::Starred(changes));
     ui.set_status(
         format!(
             "{} {} article(s) (queued)",
             if starred { "Starred" } else { "Unstarred" },
-            ids.len()
+            changed_ids.len()
         )
         .into(),
     );
@@ -2527,6 +2701,7 @@ mod selection_tests {
             handle: runtime.handle().clone(),
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
+            undo: VecDeque::new(),
         }));
 
         assert_eq!(select_all_in_view(&state), 3);
@@ -2552,6 +2727,7 @@ mod selection_tests {
             handle: runtime.handle().clone(),
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
+            undo: VecDeque::new(),
         }));
 
         assert_eq!(shift_select_in_view(&state, 1, 1), Some(2));
@@ -2585,6 +2761,7 @@ mod selection_tests {
             handle: runtime.handle().clone(),
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
+            undo: VecDeque::new(),
         }));
 
         assert_eq!(shift_select_in_view(&state, -1, 1), Some(0));
@@ -2610,9 +2787,127 @@ mod selection_tests {
             handle: runtime.handle().clone(),
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
+            undo: VecDeque::new(),
         }));
 
         assert_eq!(selected_item_or_first(&state, -1).unwrap().id, "b");
         assert_eq!(selected_item_or_first(&state, 1).unwrap().id, "b");
+    }
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::*;
+    use nieuwser_core::models::{Item, Subscription};
+    use nieuwser_core::store::ItemSummary;
+
+    fn summary(id: &str, read: bool, starred: bool) -> ItemSummary {
+        ItemSummary {
+            id: id.into(),
+            feed_id: "feed/1".into(),
+            feed_title: "Feed".into(),
+            title: format!("Article {id}"),
+            author: None,
+            published: 1_700_000_000,
+            href: None,
+            read,
+            starred,
+            timestamp_usec: 1_700_000_000_000_000,
+        }
+    }
+
+    fn state_with(items: Vec<ItemSummary>) -> Arc<Mutex<UiState>> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        Arc::new(Mutex::new(UiState {
+            streams: Vec::new(),
+            items,
+            selected: HashSet::new(),
+            anchor: None,
+            handle: runtime.handle().clone(),
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+            undo: VecDeque::new(),
+        }))
+    }
+
+    #[test]
+    fn snapshots_only_items_whose_state_changes() {
+        let state = state_with(vec![summary("a", false, false), summary("b", true, true)]);
+        let ids = vec!["a".to_string(), "b".to_string(), "missing".to_string()];
+
+        let changes = read_changes(&state, &ids, true);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, "a");
+        assert!(!changes[0].was_read);
+        assert!(read_changes(&state, &ids, true).len() == 1);
+        assert!(read_changes(&state, &["b".to_string()], true).is_empty());
+
+        let changes = star_changes(&state, &ids, true);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, "a");
+        assert!(!changes[0].was_starred);
+        assert!(star_changes(&state, &["b".to_string()], true).is_empty());
+    }
+
+    #[test]
+    fn undo_history_keeps_a_bounded_tail() {
+        let state = state_with(Vec::new());
+        for index in 0..UNDO_LIMIT + 5 {
+            record_undo(
+                &state,
+                UndoAction::Read(vec![ReadChange {
+                    id: index.to_string(),
+                    was_read: false,
+                }]),
+            );
+        }
+        let state = state.lock().unwrap();
+        assert_eq!(state.undo.len(), UNDO_LIMIT);
+        match state.undo.front().unwrap() {
+            UndoAction::Read(changes) => assert_eq!(changes[0].id, "5"),
+            UndoAction::Starred(_) => panic!("unexpected star action"),
+        }
+    }
+
+    #[test]
+    fn setting_stars_updates_the_store_and_visible_state() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .reconcile_feeds(
+                &[Subscription {
+                    id: "feed/1".into(),
+                    title: "Feed".into(),
+                    ..Default::default()
+                }],
+                &[],
+            )
+            .unwrap();
+        store
+            .upsert_items(&[Item {
+                id: "a".into(),
+                timestamp_usec: Some(1_000_000),
+                content: Some(nieuwser_core::models::Content {
+                    content: "<p>Body</p>".into(),
+                }),
+                origin: Some(nieuwser_core::models::Origin {
+                    stream_id: "feed/1".into(),
+                    title: Some("Feed".into()),
+                    html_url: None,
+                }),
+                ..Default::default()
+            }])
+            .unwrap();
+        let state = state_with(vec![summary("a", false, false)]);
+
+        set_items_starred(&store, &state, &["a".to_string()], true).unwrap();
+        assert!(store.item("a").unwrap().unwrap().starred);
+        assert!(state.lock().unwrap().items[0].starred);
+
+        set_items_starred(&store, &state, &["a".to_string()], false).unwrap();
+        assert!(!store.item("a").unwrap().unwrap().starred);
+        assert!(!state.lock().unwrap().items[0].starred);
     }
 }
