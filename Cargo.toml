@@ -25,7 +25,3 @@ url = "2"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-
-# Unoptimized Slint, image decoding and HTML parsing are slow; keeps `make dev` responsive.
-[profile.dev.package."*"]
-opt-level = 2
