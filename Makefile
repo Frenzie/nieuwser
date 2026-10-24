@@ -13,14 +13,14 @@ dev:
 	cargo run -p nieuwser
 
 test:
-	cargo test -p nieuwser-core
+	cargo test --workspace
 
 fmt:
 	cargo fmt --all
 
 check:
 	cargo fmt --all --check
-	cargo test -p nieuwser-core
+	cargo test --workspace
 
 clean:
 	cargo clean
