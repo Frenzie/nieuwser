@@ -2543,12 +2543,15 @@ mod reader_layout_tests {
             text: key.into(),
         };
         ui.set_article_index(50);
-        // The first scroll uses pre-layout metrics; relayout, then close the remaining gap.
-        ui.invoke_scroll_reader(-100_000.0);
-        let _ = ui.window().take_snapshot();
-        ui.invoke_scroll_reader(-100_000.0);
-        slint::platform::update_timers_and_animations();
-        let _ = ui.window().take_snapshot();
+        // Row heights are estimated until rendered, so the end keeps moving while scrolling to it.
+        let scroll_to_end = || {
+            for _ in 0..4 {
+                ui.invoke_scroll_reader(-100_000.0);
+                slint::platform::update_timers_and_animations();
+                let _ = ui.window().take_snapshot();
+            }
+        };
+        scroll_to_end();
         ui.window()
             .dispatch_event(key(slint::platform::Key::DownArrow));
         slint::platform::update_timers_and_animations();
@@ -2589,11 +2592,7 @@ mod reader_layout_tests {
         ui.window().set_size(slint::PhysicalSize::new(1000, 800));
         ui.set_compact_page("list".into());
         ui.set_article_index(50);
-        ui.invoke_scroll_reader(-100_000.0);
-        let _ = ui.window().take_snapshot();
-        ui.invoke_scroll_reader(-100_000.0);
-        slint::platform::update_timers_and_animations();
-        let _ = ui.window().take_snapshot();
+        scroll_to_end();
         for _ in 0..3 {
             ui.window()
                 .dispatch_event(key(slint::platform::Key::PageDown));
