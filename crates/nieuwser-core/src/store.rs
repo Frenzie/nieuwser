@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
@@ -88,8 +88,13 @@ impl Store {
         Ok(store)
     }
 
+    fn conn(&self) -> MutexGuard<'_, Connection> {
+        // Transactions roll back on drop, so a panic in another thread leaves the data consistent.
+        self.conn.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS account (
@@ -235,7 +240,7 @@ impl Store {
     }
 
     pub fn set_account(&self, base_url: &str, email: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO account(id, base_url, email, created_at) VALUES (1, ?1, ?2, ?3)
              ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, email = excluded.email",
@@ -245,7 +250,7 @@ impl Store {
     }
 
     pub fn account(&self) -> Result<Option<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn
             .query_row(
                 "SELECT base_url, email FROM account WHERE id = 1",
@@ -256,7 +261,7 @@ impl Store {
     }
 
     pub fn set_auth_token(&self, token: Option<&str>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         conn.execute(
             "UPDATE account SET auth_token = ?1 WHERE id = 1",
             params![token],
@@ -265,7 +270,7 @@ impl Store {
     }
 
     pub fn auth_token(&self) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn
             .query_row(
                 "SELECT auth_token FROM account WHERE id = 1 AND auth_token IS NOT NULL",
@@ -277,7 +282,7 @@ impl Store {
 
     /// Upsert folders/feeds from the server and remove feeds no longer subscribed.
     pub fn reconcile_feeds(&self, subscriptions: &[Subscription], tags: &[Tag]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         let now = now();
 
@@ -377,7 +382,7 @@ impl Store {
     }
 
     pub fn set_unread_counts(&self, counts: &[UnreadCount]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         for count in counts {
             if count.id.starts_with("feed/") {
@@ -402,7 +407,7 @@ impl Store {
     }
 
     pub fn upsert_items(&self, items: &[Item]) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         let now = now();
         let mut affected_feeds = HashSet::new();
@@ -501,7 +506,7 @@ impl Store {
     }
 
     pub fn feeds(&self) -> Result<Vec<FeedRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT f.id, f.title, f.folder_id, fo.name, f.unread_count, f.icon_url, f.html_url
              FROM feeds f
@@ -590,7 +595,7 @@ impl Store {
              LIMIT ? OFFSET ?",
             clauses.join(" AND ")
         );
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params_from_iter(values), |row| {
             Ok(ItemSummary {
@@ -614,7 +619,7 @@ impl Store {
     }
 
     pub fn item(&self, id: &str) -> Result<Option<ItemRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn
             .query_row(
                 "SELECT items.id, items.feed_id, COALESCE(feeds.title, ''),
@@ -645,7 +650,7 @@ impl Store {
     }
 
     pub fn cache_bytes(&self) -> Result<u64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         let bytes: i64 = conn.query_row(
             "SELECT
                  (SELECT COALESCE(SUM(
@@ -666,7 +671,7 @@ impl Store {
             return Ok(0);
         }
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         let mut evicted = 0;
         loop {
@@ -729,7 +734,7 @@ impl Store {
     }
 
     pub fn cached_media(&self, url: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn
             .query_row(
                 "SELECT data FROM media WHERE url = ?1",
@@ -740,7 +745,7 @@ impl Store {
     }
 
     pub fn put_media(&self, url: &str, data: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO media(url, data, fetched_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(url) DO UPDATE SET data = excluded.data,
@@ -754,7 +759,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         let op = if read { "read" } else { "unread" };
         for id in ids {
@@ -779,7 +784,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         let op = if starred { "star" } else { "unstar" };
         for id in ids {
@@ -802,7 +807,7 @@ impl Store {
 
     pub fn mark_all_read(&self, stream: &Stream, ts_us: i64) -> Result<()> {
         let (filter, values) = stream_where(stream);
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute(
             &format!("UPDATE items SET read = 1 WHERE {filter}"),
@@ -830,7 +835,7 @@ impl Store {
     }
 
     pub fn outbox(&self, limit: i64) -> Result<Vec<OutboxOp>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, item_id, stream_id, op, ts_us FROM outbox
                  WHERE attempts < ?2 ORDER BY id LIMIT ?1",
@@ -855,7 +860,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         for id in ids {
             tx.execute("DELETE FROM outbox WHERE id = ?1", params![id])?;
@@ -868,7 +873,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         for id in ids {
             tx.execute(
@@ -881,7 +886,7 @@ impl Store {
     }
 
     pub fn dead_outbox_count(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM outbox WHERE attempts >= ?1",
             params![MAX_PUSH_ATTEMPTS],
@@ -891,7 +896,7 @@ impl Store {
 
     /// The caller must ensure `remote_unread` is the complete unread set.
     pub fn reconcile_read_state(&self, remote_unread: &HashSet<String>) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         fill_remote_ids(&tx, remote_unread)?;
         tx.execute(
@@ -920,7 +925,7 @@ impl Store {
 
     /// The caller must ensure `remote_starred` is the complete starred set.
     pub fn reconcile_starred_state(&self, remote_starred: &HashSet<String>) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         fill_remote_ids(&tx, remote_starred)?;
         tx.execute(
@@ -954,7 +959,7 @@ impl Store {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS wanted_ids (id TEXT PRIMARY KEY);
@@ -988,7 +993,7 @@ impl Store {
     }
 
     pub fn newest_item_usec(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn.query_row(
             "SELECT COALESCE(MAX(timestamp_usec), 0) FROM items",
             [],
@@ -997,7 +1002,7 @@ impl Store {
     }
 
     pub fn total_unread(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(
             conn.query_row("SELECT COUNT(*) FROM items WHERE read = 0", [], |row| {
                 row.get(0)
@@ -1006,7 +1011,7 @@ impl Store {
     }
 
     pub fn state(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         Ok(conn
             .query_row(
                 "SELECT value FROM sync_state WHERE key = ?1",
@@ -1017,7 +1022,7 @@ impl Store {
     }
 
     pub fn set_state(&self, key: &str, value: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn();
         conn.execute(
             "INSERT INTO sync_state(key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
