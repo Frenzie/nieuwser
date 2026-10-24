@@ -2026,7 +2026,15 @@ fn undo_last(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) {
     };
     match result {
         Ok(()) => {
-            ui.set_status(format!("Undid last change for {} article(s).", action.len()).into())
+            let remaining = state.lock().unwrap().undo.len();
+            let hint = if remaining > 0 {
+                " Ctrl+Z for more."
+            } else {
+                ""
+            };
+            ui.set_status(
+                format!("Undid last change for {} article(s).{hint}", action.len()).into(),
+            );
         }
         Err(error) => {
             state.lock().unwrap().undo.push_back(action);
@@ -2098,7 +2106,7 @@ fn mark_selected_read(
     record_undo(state, UndoAction::Read(changes));
     ui.set_status(
         format!(
-            "Marked {} article(s) {} (queued)",
+            "Marked {} article(s) {} (queued) — Ctrl+Z to undo",
             changed_ids.len(),
             if read { "read" } else { "unread" }
         )
@@ -2189,7 +2197,7 @@ fn mark_selected_starred(
     record_undo(state, UndoAction::Starred(changes));
     ui.set_status(
         format!(
-            "{} {} article(s) (queued)",
+            "{} {} article(s) (queued) — Ctrl+Z to undo",
             if starred { "Starred" } else { "Unstarred" },
             changed_ids.len()
         )

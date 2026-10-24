@@ -762,6 +762,12 @@ export component MainWindow inherits Window {
                 && (!root.compact || (root.compact-page == "list" && !root.feed-drawer-open))) {
                 root.select-all();
                 accept
+            } else if (event.text == "z" && event.modifiers.control
+                && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta
+                && !root.shortcuts-open
+                && (!root.compact || !root.feed-drawer-open)) {
+                root.undo();
+                accept
             } else if ((event.text == root.shortcut-open
                     && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)
                 || (event.text == "o" && event.modifiers.control
