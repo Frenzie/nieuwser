@@ -1,9 +1,12 @@
 slint::include_modules!();
 
+mod accounts;
+
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -12,7 +15,7 @@ use nieuwser_core::media::fetch_image;
 use nieuwser_core::models::Stream;
 use nieuwser_core::reader::{Block, BlockKind, html_to_blocks, html_to_text};
 use nieuwser_core::store::ItemSummary;
-use nieuwser_core::{Client, Store, SyncEngine};
+use nieuwser_core::{Client, Store, SyncEngine, SyncReport};
 use slint::{ComponentHandle, Model, ModelRc, StyledText, VecModel};
 
 #[derive(Clone)]
@@ -31,6 +34,8 @@ struct UiState {
     pending_icons: HashSet<String>,
     pending_media: HashSet<String>,
 }
+
+static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 const ARTICLE_PAGE: i64 = 300;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -62,7 +67,7 @@ thread_local! {
 
 fn main() -> Result<()> {
     configure_emoji_font()?;
-    let db_path = db_path();
+    let db_path = db_path()?;
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -153,8 +158,69 @@ fn main() -> Result<()> {
 
     ui.run()?;
     save_pane_widths(&store, ui.get_feed_width(), ui.get_list_width());
+    let restart = RESTART_REQUESTED.swap(false, Ordering::SeqCst);
     drop(timer);
+    drop(ui);
+    drop(state);
+    drop(store);
+    runtime.shutdown_timeout(Duration::from_millis(100));
+    if restart {
+        relaunch()?;
+    }
     Ok(())
+}
+
+enum SaveOutcome {
+    Synced(SyncReport),
+    Restart,
+}
+
+async fn save_account(
+    store: Arc<Store>,
+    url: &str,
+    email: &str,
+    password: &str,
+) -> Result<SaveOutcome> {
+    let client = Client::login(url, email, password).await?;
+    let base = client.base_url().to_string();
+    let key = accounts::account_key(&base, email);
+    let current = store.account()?;
+    let current_key = current
+        .as_ref()
+        .map(|(base, email)| accounts::account_key(base, email));
+    let override_db = std::env::var_os("NIEUWSER_DB").is_some();
+
+    if current_key.as_deref() == Some(key.as_str()) || (override_db && current.is_none()) {
+        store.set_account(&base, email)?;
+        store.set_auth_token(Some(client.auth_token()))?;
+        let mut engine = SyncEngine::with_auth(store, &base, client.auth_token())?;
+        let report = engine.sync().await?;
+        return Ok(SaveOutcome::Synced(report));
+    }
+
+    if override_db {
+        anyhow::bail!("NIEUWSER_DB overrides account storage; unset it to switch accounts");
+    }
+
+    let root = accounts::data_root();
+    let path = accounts::account_db_path(&root, &key);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let target = Store::open(&path)?;
+    if let Some((existing_base, existing_email)) = target.account()?
+        && (existing_base != base || existing_email != email)
+    {
+        anyhow::bail!(
+            "account database {} belongs to another account",
+            path.display()
+        );
+    }
+    target.set_account(&base, email)?;
+    target.set_auth_token(Some(client.auth_token()))?;
+    drop(target);
+    accounts::write_active_key(&root, &key)?;
+    Ok(SaveOutcome::Restart)
 }
 
 fn bind_callbacks(
@@ -223,15 +289,12 @@ fn bind_callbacks(
             let store = store.clone();
             let state = state.clone();
             handle.spawn(async move {
-                let result = match SyncEngine::new(store.clone(), &url, &email, &password).await {
-                    Ok(mut engine) => engine.sync().await,
-                    Err(error) => Err(error),
-                };
+                let result = save_account(store.clone(), &url, &email, &password).await;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.set_settings_busy(false);
                         match result {
-                            Ok(report) => {
+                            Ok(SaveOutcome::Synced(report)) => {
                                 ui.set_settings_open(false);
                                 ui.set_settings_password("".into());
                                 ui.set_settings_status("".into());
@@ -241,6 +304,22 @@ fn bind_callbacks(
                                 let index = ui.get_feed_index();
                                 let _ = refresh_feeds(&ui, &store, &state);
                                 let _ = reload_preserving_selection(&ui, &store, &state, index);
+                            }
+                            Ok(SaveOutcome::Restart) => {
+                                ui.set_settings_open(false);
+                                ui.set_settings_password("".into());
+                                ui.set_settings_status("".into());
+                                ui.set_status("Account switched. Restarting…".into());
+                                RESTART_REQUESTED.store(true, Ordering::SeqCst);
+                                if let Err(error) = slint::quit_event_loop() {
+                                    RESTART_REQUESTED.store(false, Ordering::SeqCst);
+                                    ui.set_settings_status(
+                                        format!(
+                                            "Restart failed: {error}. Restart Nieuwser manually."
+                                        )
+                                        .into(),
+                                    );
+                                }
                             }
                             Err(error) => {
                                 if store.account().ok().flatten().is_some() {
@@ -2101,13 +2180,22 @@ fn configure_emoji_font() -> Result<()> {
     Ok(())
 }
 
-fn db_path() -> PathBuf {
-    if let Ok(path) = std::env::var("NIEUWSER_DB") {
-        return PathBuf::from(path);
-    }
-    directories::ProjectDirs::from("", "", "nieuwser")
-        .map(|dirs| dirs.data_dir().join("nieuwser.db"))
-        .unwrap_or_else(|| PathBuf::from("nieuwser.db"))
+fn db_path() -> Result<PathBuf> {
+    accounts::resolve_db_path(&accounts::data_root())
+}
+
+fn relaunch() -> Result<()> {
+    let exe = match std::env::var_os("APPIMAGE").filter(|path| !path.is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_exe()
+            .map_err(|error| anyhow::anyhow!("could not determine the executable path: {error}"))?,
+    };
+    let mut command = std::process::Command::new(exe);
+    command.args(std::env::args_os().skip(1));
+    command
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("could not restart Nieuwser: {error}"))?;
+    Ok(())
 }
 
 #[cfg(test)]

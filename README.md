@@ -25,6 +25,9 @@ The surrounding feed list is illustrative demo data.
   can show all, unread, or read articles.
 - Sync via the FreshRSS Google Reader API (`/api/greader.php`), including offline writes
   queued in an outbox and replayed on the next sync.
+- One isolated SQLite profile per server/account. Switching accounts prepares the target profile
+  and restarts into it, so its outbox, feeds, articles, and sync watermark are never mixed with
+  another server.
 - Token-based auth: the password is exchanged for an auth token and never stored.
 - Remembers the window size and position between launches (position is skipped on Wayland).
 - SQLite cache with a ~500 MB budget for article bodies and media; unread/starred bodies are never evicted.
@@ -61,7 +64,9 @@ PLAN.md                 handoff plan, decisions, data model, and status
 ```sh
 make build   # cargo build --release -p nieuwser
 
-# Desktop app; first run opens the account dialog. Set NIEUWSER_DB to override the database path.
+# Desktop app; first run opens the account dialog.
+# Per-server/account databases live under the platform data directory.
+# NIEUWSER_DATA_DIR overrides that root; NIEUWSER_DB forces a single database (and disables switching).
 make run     # release build; use "make dev" for a debug build
 ```
 
@@ -79,7 +84,9 @@ cargo run -p nieuwser-cli -- --db ./nieuwser.db feeds
 cargo run -p nieuwser-cli -- --db ./nieuwser.db items --stream all --limit 20
 ```
 
-Environment variables `NIEUWSER_API_URL`, `NIEUWSER_EMAIL`, and `NIEUWSER_DB` are also accepted.
+The CLI also accepts `NIEUWSER_API_URL`, `NIEUWSER_EMAIL`, and `NIEUWSER_DB`. The desktop app
+accepts `NIEUWSER_DATA_DIR` to move the per-account profile root, and `NIEUWSER_DB` as a
+single-database override that disables account switching.
 
 ## Development
 

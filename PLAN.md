@@ -80,7 +80,14 @@ Gotchas:
 
 ## Data model
 
-- `account` (single row): base URL, email.
+The app keeps one SQLite database per normalized server URL + username under
+`<data dir>/accounts/<key>/nieuwser.db`. `<data dir>/active-account` points at the current
+profile. The previous single `<data dir>/nieuwser.db` is migrated on first launch if it contains
+an account. Switching profiles writes the target account/token and restarts the app, so outboxes,
+sync watermarks, feeds, and articles never cross accounts. `NIEUWSER_DB` is a single-database
+override for tests/manual use and disables switching.
+
+- `account` (single row per database): base URL, email, auth token.
 - `folders`: FreshRSS label stream IDs and names.
 - `feeds`: `feed/<id>`, title, URLs, icon, folder, unread count.
 - `items`: raw ID, feed, title, author, timestamps, URLs, summary/content HTML, read/starred.
@@ -317,7 +324,7 @@ Working today:
   article images, persisted light/dark theme, restored window geometry, editable shortcuts and
   shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
   browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 39 core tests plus 9 app tests, covering API parsing/auth, reader blocks,
+- Tests: 39 core tests plus 13 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, and long-reader rendering.
@@ -348,6 +355,8 @@ Recent changes (2026-10-23):
 - Added Ctrl+A select-all and Shift+Up/Down range selection in the article list, 2x HiDPI README
   screenshots using a real CC BY article, and QtSvg-compatible icon assets; bumped the version
   to 0.2.1.
+- Split storage into one SQLite profile per server/account, with legacy single-DB migration and
+  an automatic restart into the selected profile.
 - Re-validated the sync path against the local FreshRSS dev server: incremental watermark,
   unread/starred backfill, microsecond mark-all cutoff, modified-article pickup, and star/unstar
   round-trip passed; dead-letter/permanent-4xx remains mock-only.
@@ -407,7 +416,8 @@ FRESHRSS_PASSWORD=... cargo run -p nieuwser-cli -- \
 cargo run -p nieuwser-cli -- --db ./nieuwser.db feeds
 cargo run -p nieuwser-cli -- --db ./nieuwser.db items --stream all --limit 20
 
-# UI; first run opens the account dialog. Set NIEUWSER_DB to override the data directory.
+# UI; first run opens the account dialog. Profiles live under the platform data directory.
+# NIEUWSER_DATA_DIR overrides the profile root; NIEUWSER_DB forces one database.
 cargo run -p nieuwser
 ```
 
@@ -423,7 +433,7 @@ cargo run -p nieuwser
 - Final app name and license.
 - Whether to add an optional Blitz/HTML renderer for full fidelity after v1; the block reader
   remains the default and Blitz is explicitly out of scope for now.
-- Multi-account and feed management timing.
+- Feed management timing.
 - Android support: assessed as feasible but deferred; see the Android section for blockers and a
   resume checklist. Decide whether to pursue it after M5.
 - E-ink support: assessed as feasible but deferred; see the E-ink section for blockers and the
