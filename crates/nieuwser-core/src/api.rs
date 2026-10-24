@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::{Client as HttpClient, StatusCode};
 use serde::de::DeserializeOwned;
@@ -28,6 +30,15 @@ const MAX_TOKEN_BYTES: usize = 64 * 1024;
 const MAX_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_API_BYTES: usize = 32 * 1024 * 1024;
 
+fn build_http() -> Result<HttpClient> {
+    // The total timeout also covers reading the body, so it must fit a 32 MB page on a slow link.
+    Ok(HttpClient::builder()
+        .user_agent(concat!("Nieuwser/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(120))
+        .build()?)
+}
+
 pub struct Client {
     http: HttpClient,
     base: String,
@@ -38,7 +49,7 @@ pub struct Client {
 impl Client {
     pub async fn login(api_url: &str, email: &str, password: &str) -> Result<Self> {
         let base = normalize_api_url(api_url)?;
-        let http = HttpClient::builder().user_agent("nieuwser/0.1").build()?;
+        let http = build_http()?;
 
         let body = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("Email", email)
@@ -80,7 +91,7 @@ impl Client {
 
     pub fn with_auth(api_url: &str, auth: String) -> Result<Self> {
         Ok(Self {
-            http: HttpClient::builder().user_agent("nieuwser/0.1").build()?,
+            http: build_http()?,
             base: normalize_api_url(api_url)?,
             auth,
             token: None,
