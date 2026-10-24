@@ -1121,7 +1121,7 @@ fn load_stream(
         state.selected.clear();
         state.anchor = None;
     }
-    push_articles(ui, state);
+    sync_article_rows(ui, state);
     ui.set_has_more_articles(has_more);
     ui.set_article_index(-1);
     update_adjacent_previews(ui, store, state, -1);
@@ -1151,14 +1151,6 @@ fn article_rows(items: &[ItemSummary], selected: &HashSet<String>) -> Vec<Articl
         .iter()
         .map(|item| article_row(item, selected.contains(&item.id)))
         .collect()
-}
-
-fn push_articles(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
-    let rows = {
-        let state = state.lock().unwrap();
-        article_rows(&state.items, &state.selected)
-    };
-    reconcile_articles(ui, rows);
 }
 
 fn sync_article_rows(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
