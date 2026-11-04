@@ -684,6 +684,12 @@ export component MainWindow inherits Window {
         main-focus.focus();
     }
 
+    public function submit-settings() {
+        if (!root.settings-busy) {
+            root.save-settings(root.settings-url, root.settings-email, root.settings-password);
+        }
+    }
+
     public function open-mark-all-confirm() {
         root.menu-open = false;
         root.mark-all-confirm-open = true;
@@ -1733,6 +1739,7 @@ export component MainWindow inherits Window {
                 LineEdit {
                     text <=> root.settings-url;
                     placeholder-text: "https://freshrss.example.net";
+                    accepted(text) => { root.submit-settings(); }
                 }
 
                 Text {
@@ -1744,6 +1751,7 @@ export component MainWindow inherits Window {
                 LineEdit {
                     text <=> root.settings-email;
                     placeholder-text: "admin";
+                    accepted(text) => { root.submit-settings(); }
                 }
 
                 Text {
@@ -1755,6 +1763,7 @@ export component MainWindow inherits Window {
                 LineEdit {
                     text <=> root.settings-password;
                     input-type: password;
+                    accepted(text) => { root.submit-settings(); }
                 }
 
                 Text {
@@ -1790,7 +1799,7 @@ export component MainWindow inherits Window {
                         text: root.settings-busy ? "Connecting…" : "Save & sync";
                         enabled: !root.settings-busy;
                         clicked => {
-                            root.save-settings(root.settings-url, root.settings-email, root.settings-password);
+                            root.submit-settings();
                         }
                     }
                 }
