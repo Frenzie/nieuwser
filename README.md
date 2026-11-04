@@ -50,7 +50,8 @@ The surrounding feed list is illustrative demo data.
 - Rust stable (edition 2024)
 - On Linux: `pkg-config`, plus fontconfig and FreeType development headers
   (Debian/Ubuntu: `libfontconfig-dev libfreetype-dev`)
-- A FreshRSS account and its API URL, e.g. `https://freshrss.example.net/api/greader.php`
+- A FreshRSS account and its server URL or API URL, e.g. `https://freshrss.example.net`
+  or `https://freshrss.example.net/api/greader.php`
 
 ## Layout
 

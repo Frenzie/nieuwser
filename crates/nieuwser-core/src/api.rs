@@ -18,11 +18,65 @@ pub fn normalize_api_url(input: &str) -> Result<String> {
     }
     if base.ends_with("/api") {
         base.push_str("/greader.php");
-    } else if !base.ends_with("/api/greader.php") {
+    } else if !base.ends_with("/greader.php") {
         base.push_str("/api/greader.php");
     }
     Url::parse(&base)?;
     Ok(base)
+}
+
+/// API bases to try for a server or API URL.
+///
+/// FreshRSS serves its API at `<root>/api/greader.php` in some installations
+/// and at `<root>/p/api/greader.php` in others. Users may also paste the web
+/// UI or API-page URL. Return the canonical normalization first, then both
+/// layouts, and let the caller try the next candidate only when a path is not
+/// found.
+fn login_candidates(input: &str) -> Result<Vec<String>> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(Error::Other("API URL is empty".into()));
+    }
+    let mut url = Url::parse(trimmed)?;
+    url.set_query(None);
+    url.set_fragment(None);
+
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, normalize_api_url(url.as_str())?);
+
+    let path = url.path().trim_end_matches('/');
+    if let Some(index) = path.find("/greader.php") {
+        // The input is already an API URL, possibly with an endpoint such as
+        // `/accounts/ClientLogin` appended.
+        let mut endpoint = url.clone();
+        endpoint.set_path(&path[..index + "/greader.php".len()]);
+        return Ok(vec![endpoint.to_string()]);
+    }
+
+    // Strip the FreshRSS web UI/API suffixes to find the installation root.
+    let mut root = path;
+    loop {
+        let stripped = root
+            .strip_suffix("/i")
+            .or_else(|| root.strip_suffix("/p"))
+            .or_else(|| root.strip_suffix("/api"));
+        match stripped {
+            Some(value) => root = value,
+            None => break,
+        }
+    }
+    for suffix in ["/p/api/greader.php", "/api/greader.php"] {
+        let mut candidate = url.clone();
+        candidate.set_path(&format!("{root}{suffix}"));
+        push_candidate(&mut candidates, candidate.to_string());
+    }
+    Ok(candidates)
+}
+
+fn push_candidate(candidates: &mut Vec<String>, candidate: String) {
+    if !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
 }
 
 const MAX_LOGIN_BYTES: usize = 1024 * 1024;
@@ -48,45 +102,57 @@ pub struct Client {
 
 impl Client {
     pub async fn login(api_url: &str, email: &str, password: &str) -> Result<Self> {
-        let base = normalize_api_url(api_url)?;
+        let candidates = login_candidates(api_url)?;
         let http = build_http()?;
-
-        let body = url::form_urlencoded::Serializer::new(String::new())
+        let request_body = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("Email", email)
             .append_pair("Passwd", password)
             .finish();
 
-        let response = http
-            .post(format!("{base}/accounts/ClientLogin"))
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(body)
-            .send()
-            .await?;
-        let status = response.status();
-        let body = http_body::text(response, MAX_LOGIN_BYTES, "login response").await?;
-        if !status.is_success() {
-            return Err(Error::Http {
-                status,
-                body: clip(&body, 500),
-            });
-        }
-        let auth = body
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Auth="))
-            .map(str::to_string)
-            .ok_or_else(|| {
-                Error::Other(format!(
-                    "no Auth token in login response: {}",
-                    clip(&body, 500)
-                ))
-            })?;
+        let mut last_error = None;
+        for base in candidates {
+            let response = http
+                .post(format!("{base}/accounts/ClientLogin"))
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(request_body.clone())
+                .send()
+                .await?;
+            let status = response.status();
+            let response_body =
+                http_body::text(response, MAX_LOGIN_BYTES, "login response").await?;
 
-        Ok(Self {
-            http,
-            base,
-            auth,
-            token: None,
-        })
+            if status.is_success() {
+                if let Some(auth) = response_body
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix("Auth="))
+                    .map(str::to_string)
+                {
+                    return Ok(Self {
+                        http,
+                        base,
+                        auth,
+                        token: None,
+                    });
+                }
+                // A catch-all page may answer 200 for a wrong API path.
+                last_error = Some(Error::Other(format!(
+                    "no Auth token in login response from {base}: {}",
+                    clip(&response_body, 500)
+                )));
+                continue;
+            }
+
+            let error = Error::Http {
+                status,
+                body: clip(&response_body, 500),
+            };
+            if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
+                last_error = Some(error);
+                continue;
+            }
+            return Err(error);
+        }
+        Err(last_error.unwrap_or_else(|| Error::Other("no greader API endpoint found".into())))
     }
 
     pub fn with_auth(api_url: &str, auth: String) -> Result<Self> {
@@ -366,6 +432,42 @@ mod tests {
             normalize_api_url("https://example.com/api/").unwrap(),
             "https://example.com/api/greader.php"
         );
+        assert_eq!(
+            normalize_api_url("https://example.com/feeds/p/api/").unwrap(),
+            "https://example.com/feeds/p/api/greader.php"
+        );
+        assert_eq!(
+            normalize_api_url("https://example.com/feeds/p/api/greader.php").unwrap(),
+            "https://example.com/feeds/p/api/greader.php"
+        );
+    }
+
+    #[test]
+    fn login_candidates_cover_freshrss_layouts() {
+        assert_eq!(
+            login_candidates("https://example.com/feeds/").unwrap(),
+            [
+                "https://example.com/feeds/api/greader.php",
+                "https://example.com/feeds/p/api/greader.php",
+            ]
+        );
+        assert_eq!(
+            login_candidates("https://example.com/feeds/p/i/").unwrap(),
+            [
+                "https://example.com/feeds/p/i/api/greader.php",
+                "https://example.com/feeds/p/api/greader.php",
+                "https://example.com/feeds/api/greader.php",
+            ]
+        );
+        assert_eq!(
+            login_candidates("https://example.com/feeds/p/api/greader.php").unwrap(),
+            ["https://example.com/feeds/p/api/greader.php"]
+        );
+        assert_eq!(
+            login_candidates("https://example.com/feeds/p/api/greader.php/accounts/ClientLogin")
+                .unwrap(),
+            ["https://example.com/feeds/p/api/greader.php"]
+        );
     }
 
     #[tokio::test]
@@ -404,6 +506,53 @@ mod tests {
         assert!(body.contains("i=2"));
         assert!(body.contains("a=user%2F-%2Fstate%2Fcom.google%2Fread"));
         assert!(body.contains("T=csrf"));
+    }
+
+    #[tokio::test]
+    async fn login_falls_back_to_p_api_for_subdirectory_installs() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/feeds/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/feeds/p/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Auth=secret\n"))
+            .mount(&server)
+            .await;
+
+        let client = Client::login(&format!("{}/feeds/", server.uri()), "me", "pw")
+            .await
+            .unwrap();
+        assert_eq!(
+            client.base_url(),
+            format!("{}/feeds/p/api/greader.php", server.uri())
+        );
+    }
+
+    #[tokio::test]
+    async fn login_does_not_retry_another_path_after_auth_failure() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/feeds/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/feeds/p/api/greader.php/accounts/ClientLogin"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Auth=secret\n"))
+            .mount(&server)
+            .await;
+
+        assert!(
+            Client::login(&format!("{}/feeds/", server.uri()), "me", "wrong")
+                .await
+                .is_err()
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[test]
