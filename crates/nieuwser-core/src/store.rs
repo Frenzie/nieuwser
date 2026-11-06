@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -584,35 +584,9 @@ impl Store {
     ) -> Result<Vec<ItemSummary>> {
         let (filter, mut values) = stream_where(stream);
         let mut clauses = vec![filter];
-        if let Some(read) = read {
-            clauses.push(if read {
-                "items.read = 1".into()
-            } else {
-                "items.read = 0".into()
-            });
-        }
-        if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
-            let pattern = format!("%{}%", term.trim());
-            if let Some(query) = fts_query(term) {
-                clauses.push(
-                    "(items.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)
-                      OR COALESCE(feeds.title, '') LIKE ?)"
-                        .into(),
-                );
-                values.push(Value::Text(query));
-                values.push(Value::Text(pattern));
-            } else {
-                clauses.push(
-                    "(items.title LIKE ? OR items.author LIKE ?
-                      OR items.content_html LIKE ? OR items.summary_html LIKE ?
-                      OR COALESCE(feeds.title, '') LIKE ?)"
-                        .into(),
-                );
-                for _ in 0..5 {
-                    values.push(Value::Text(pattern.clone()));
-                }
-            }
-        }
+        let (item_clauses, item_values) = item_filters(read, search);
+        clauses.extend(item_clauses);
+        values.extend(item_values);
         values.push(Value::Integer(limit.clamp(1, 1000)));
         values.push(Value::Integer(offset.max(0)));
 
@@ -648,6 +622,58 @@ impl Store {
             items.push(row?);
         }
         Ok(items)
+    }
+
+    /// Counts matching items per feed, including feeds with zero matches.
+    pub fn feed_counts(
+        &self,
+        read: Option<bool>,
+        search: Option<&str>,
+    ) -> Result<HashMap<String, i64>> {
+        let (clauses, values) = item_filters(read, search);
+        let mut joins = clauses.join(" AND ");
+        if !joins.is_empty() {
+            joins = format!(" AND {joins}");
+        }
+        let sql = format!(
+            "SELECT feeds.id, COUNT(items.id)
+             FROM feeds
+             LEFT JOIN items ON items.feed_id = feeds.id{joins}
+             GROUP BY feeds.id"
+        );
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(values), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut counts = HashMap::new();
+        for row in rows {
+            let (id, count) = row?;
+            counts.insert(id, count);
+        }
+        Ok(counts)
+    }
+
+    pub fn count_items(
+        &self,
+        stream: &Stream,
+        read: Option<bool>,
+        search: Option<&str>,
+    ) -> Result<i64> {
+        let (filter, mut values) = stream_where(stream);
+        let mut clauses = vec![filter];
+        let (item_clauses, item_values) = item_filters(read, search);
+        clauses.extend(item_clauses);
+        values.extend(item_values);
+        let sql = format!(
+            "SELECT COUNT(*)
+             FROM items
+             LEFT JOIN feeds ON feeds.id = items.feed_id
+             WHERE {}",
+            clauses.join(" AND ")
+        );
+        let conn = self.conn();
+        Ok(conn.query_row(&sql, params_from_iter(values), |row| row.get(0))?)
     }
 
     pub fn item(&self, id: &str) -> Result<Option<ItemRow>> {
@@ -1124,6 +1150,41 @@ fn fts_query(input: &str) -> Option<String> {
     (!terms.is_empty()).then(|| terms.join(" AND "))
 }
 
+fn item_filters(read: Option<bool>, search: Option<&str>) -> (Vec<String>, Vec<Value>) {
+    let mut clauses = Vec::new();
+    let mut values = Vec::new();
+    if let Some(read) = read {
+        clauses.push(if read {
+            "items.read = 1".into()
+        } else {
+            "items.read = 0".into()
+        });
+    }
+    if let Some(term) = search.filter(|s| !s.trim().is_empty()) {
+        let pattern = format!("%{}%", term.trim());
+        if let Some(query) = fts_query(term) {
+            clauses.push(
+                "(items.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)
+                  OR COALESCE(feeds.title, '') LIKE ?)"
+                    .into(),
+            );
+            values.push(Value::Text(query));
+            values.push(Value::Text(pattern));
+        } else {
+            clauses.push(
+                "(items.title LIKE ? OR items.author LIKE ?
+                  OR items.content_html LIKE ? OR items.summary_html LIKE ?
+                  OR COALESCE(feeds.title, '') LIKE ?)"
+                    .into(),
+            );
+            for _ in 0..5 {
+                values.push(Value::Text(pattern.clone()));
+            }
+        }
+    }
+    (clauses, values)
+}
+
 fn stream_where(stream: &Stream) -> (String, Vec<Value>) {
     match stream {
         Stream::All => ("1 = 1".into(), vec![]),
@@ -1239,6 +1300,75 @@ mod tests {
 
         store.remove_ops(&[ops[0].id]).unwrap();
         assert!(store.outbox(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn counts_items_per_feed_filter_and_search() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .reconcile_feeds(
+                &[
+                    subscription("feed/1", "One", Some("News")),
+                    subscription("feed/2", "Two", None),
+                ],
+                &[Tag {
+                    id: "user/-/label/News".into(),
+                    label: Some("News".into()),
+                }],
+            )
+            .unwrap();
+
+        let mut starred = item("4", "feed/2", 4_000_000, false);
+        starred
+            .categories
+            .push("user/-/state/com.google/starred".into());
+        store
+            .upsert_items(&[
+                item("1", "feed/1", 1_000_000, false),
+                item("2", "feed/1", 2_000_000, true),
+                item("3", "feed/2", 3_000_000, false),
+                starred,
+            ])
+            .unwrap();
+
+        let counts = store.feed_counts(None, None).unwrap();
+        assert_eq!(counts.get("feed/1"), Some(&2));
+        assert_eq!(counts.get("feed/2"), Some(&2));
+
+        let counts = store.feed_counts(Some(false), None).unwrap();
+        assert_eq!(counts.get("feed/1"), Some(&1));
+        assert_eq!(counts.get("feed/2"), Some(&2));
+
+        let counts = store.feed_counts(Some(true), None).unwrap();
+        assert_eq!(counts.get("feed/1"), Some(&1));
+        assert_eq!(counts.get("feed/2"), Some(&0));
+
+        let counts = store.feed_counts(None, Some("one")).unwrap();
+        assert_eq!(counts.get("feed/1"), Some(&2));
+        assert_eq!(counts.get("feed/2"), Some(&0));
+
+        assert_eq!(store.count_items(&Stream::All, None, None).unwrap(), 4);
+        assert_eq!(store.count_items(&Stream::Starred, None, None).unwrap(), 1);
+        assert_eq!(
+            store.count_items(&Stream::All, Some(false), None).unwrap(),
+            3
+        );
+        assert_eq!(
+            store
+                .count_items(
+                    &Stream::Folder("user/-/label/News".into()),
+                    Some(false),
+                    None
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .count_items(&Stream::All, Some(true), Some("item"))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
