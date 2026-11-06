@@ -4,8 +4,11 @@ export struct FeedRow {
     id: string,
     title: string,
     folder: string,
+    folder-id: string,
     unread: int,
     icon: image,
+    kind: string,
+    indent: int,
 }
 
 export struct ArticleRow {
@@ -417,7 +420,7 @@ component FeedSidebar inherits Rectangle {
 
         ListView {
             for feed[i] in root.feeds : Rectangle {
-                height: 38px;
+                height: feed.kind == "folder" ? 32px : 38px;
                 border-radius: 6px;
                 background: i == root.selected-index ? Theme.feed-selected : transparent;
 
@@ -425,7 +428,11 @@ component FeedSidebar inherits Rectangle {
                     padding: 8px;
                     spacing: 6px;
 
-                    Image {
+                    Rectangle {
+                        width: feed.indent * 12px;
+                    }
+
+                    if feed.kind == "feed" : Image {
                         source: feed.icon;
                         width: 16px;
                         height: 16px;
@@ -433,20 +440,21 @@ component FeedSidebar inherits Rectangle {
                         vertical-alignment: center;
                     }
 
-                    VerticalLayout {
-                        alignment: center;
+                    if feed.kind == "folder" : Text {
+                        text: "▸";
+                        color: Theme.text-faint;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: feed.title;
+                        overflow: elide;
                         horizontal-stretch: 1;
-                        Text {
-                            text: feed.title;
-                            overflow: elide;
-                            font-size: 13px;
-                        }
-                        Text {
-                            text: feed.folder;
-                            font-size: 10px;
-                            color: Theme.text-faint;
-                            overflow: elide;
-                        }
+                        font-size: feed.kind == "folder" ? 12px : 13px;
+                        font-weight: feed.kind == "folder" ? 600 : 400;
+                        color: feed.kind == "folder" ? Theme.text-muted : Theme.text;
+                        vertical-alignment: center;
                     }
 
                     Text {

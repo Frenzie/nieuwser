@@ -20,9 +20,11 @@ The surrounding feed list is illustrative demo data.
 
 ## Features
 
-- Three-pane reader: feed tree, article list, block-based reader view (no webview).
+- Three-pane reader: feed tree grouped by folder, article list, block-based reader view (no webview).
   Below 900 px it becomes a single-pane list/reader layout with a feed drawer. The article list
-  can show all, unread, or read articles.
+  can show all, unread, or read articles, and the feed tree follows that filter and the search
+  query, hiding feeds (and folders) with no matching articles and showing counts for the active
+  view. Folders with an aggregate count are selectable.
 - Sync via the FreshRSS Google Reader API (`/api/greader.php`), including offline writes
   queued in an outbox and replayed on the next sync.
 - One isolated SQLite profile per server/account. Switching accounts prepares the target profile

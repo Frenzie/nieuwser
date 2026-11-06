@@ -335,9 +335,13 @@ fn bind_callbacks(
                                 ui.set_settings_has_account(true);
                                 ui.set_status(format!("{report}").into());
                                 ui.set_last_synced(last_synced_text(&store).into());
-                                let index = ui.get_feed_index();
                                 let _ = refresh_feeds(&ui, &store, &state);
-                                let _ = reload_preserving_selection(&ui, &store, &state, index);
+                                let _ = reload_preserving_selection(
+                                    &ui,
+                                    &store,
+                                    &state,
+                                    ui.get_feed_index(),
+                                );
                             }
                             Ok(SaveOutcome::Restart) => {
                                 ui.set_settings_open(false);
@@ -443,6 +447,10 @@ fn bind_callbacks(
                 let filter = normalize_article_filter(filter.as_str());
                 ui.set_article_filter(filter.into());
                 let _ = store.set_state("article_filter", filter);
+                if let Err(error) = refresh_feeds(&ui, &store, &state) {
+                    ui.set_status(format!("Load failed: {error}").into());
+                    return;
+                }
                 if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
                     ui.set_status(format!("Load failed: {error}").into());
                 }
@@ -516,6 +524,10 @@ fn bind_callbacks(
                 }
                 let Some(ui) = ui_weak.upgrade() else { return };
                 ui.set_article_content_y(0.0);
+                if let Err(error) = refresh_feeds(&ui, &store, &state) {
+                    ui.set_status(format!("Search failed: {error}").into());
+                    return;
+                }
                 if let Err(error) = load_stream(&ui, &store, &state, ui.get_feed_index()) {
                     ui.set_status(format!("Search failed: {error}").into());
                 }
@@ -714,7 +726,7 @@ fn bind_callbacks(
             }
             state.lock().unwrap().undo.clear();
             let _ = refresh_feeds(&ui, &store, &state);
-            let _ = load_stream(&ui, &store, &state, feed_index);
+            let _ = load_stream(&ui, &store, &state, ui.get_feed_index());
             ui.set_status("Queued mark-all-read".into());
         });
     }
@@ -780,9 +792,9 @@ fn spawn_sync(
                     Ok(report) => {
                         ui.set_status(format!("{report}").into());
                         ui.set_last_synced(last_synced_text(&store).into());
-                        let index = ui.get_feed_index();
                         let _ = refresh_feeds(&ui, &store, &state);
-                        let _ = reload_preserving_selection(&ui, &store, &state, index);
+                        let _ =
+                            reload_preserving_selection(&ui, &store, &state, ui.get_feed_index());
                     }
                     Err(error) => {
                         if error.is_auth_error() {
@@ -954,52 +966,158 @@ fn last_synced_text(store: &Store) -> String {
     }
 }
 
-fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) -> Result<()> {
-    let feeds = store.feeds()?;
-    let total_unread = store.total_unread()?;
+struct SidebarRow {
+    id: String,
+    title: String,
+    folder: String,
+    folder_id: String,
+    count: i64,
+    icon_url: Option<String>,
+    kind: &'static str,
+    indent: i32,
+}
+
+fn build_sidebar(
+    feeds: Vec<nieuwser_core::store::FeedRow>,
+    counts: &HashMap<String, i64>,
+    total: i64,
+    starred: i64,
+) -> (Vec<SidebarRow>, Vec<Stream>) {
     let mut rows = vec![
-        FeedRow {
+        SidebarRow {
             id: "all".into(),
             title: "All items".into(),
-            folder: String::new().into(),
-            unread: total_unread as i32,
-            icon: slint::Image::default(),
+            folder: String::new(),
+            folder_id: String::new(),
+            count: total,
+            icon_url: None,
+            kind: "all",
+            indent: 0,
         },
-        FeedRow {
+        SidebarRow {
             id: "starred".into(),
             title: "Starred".into(),
-            folder: String::new().into(),
-            unread: 0,
-            icon: slint::Image::default(),
+            folder: String::new(),
+            folder_id: String::new(),
+            count: starred,
+            icon_url: None,
+            kind: "starred",
+            indent: 0,
         },
     ];
     let mut streams = vec![Stream::All, Stream::Starred];
 
+    let mut groups: Vec<(String, String, Vec<SidebarRow>)> = Vec::new();
+    let mut ungrouped = Vec::new();
     for feed in feeds {
         if feed.id == "feed/unknown" {
             continue;
         }
-        let icon_url = feed.icon_url.clone();
-        let icon = icon_url
-            .as_deref()
-            .and_then(|url| cached_image(url, ICON_IMAGE_SIZE));
-        if icon.is_none()
-            && let Some(url) = icon_url.as_deref()
-        {
-            spawn_icon_fetch(ui, store, state, &feed.id, url);
+        let count = counts.get(&feed.id).copied().unwrap_or(0);
+        if count == 0 {
+            continue;
         }
-        rows.push(FeedRow {
-            id: feed.id.clone().into(),
-            title: feed.title.into(),
-            folder: feed.folder_name.unwrap_or_default().into(),
-            unread: feed.unread_count as i32,
-            icon: icon.unwrap_or_default(),
-        });
-        streams.push(Stream::Feed(feed.id));
+        let row = SidebarRow {
+            id: feed.id.clone(),
+            title: feed.title,
+            folder: feed.folder_name.clone().unwrap_or_default(),
+            folder_id: feed.folder_id.clone().unwrap_or_default(),
+            count,
+            icon_url: feed.icon_url,
+            kind: "feed",
+            indent: 1,
+        };
+        match feed.folder_id {
+            Some(folder_id) => {
+                let name = feed
+                    .folder_name
+                    .unwrap_or_else(|| folder_id.rsplit('/').next().unwrap_or(&folder_id).into());
+                match groups.iter_mut().find(|group| group.0 == folder_id) {
+                    Some(group) => group.2.push(row),
+                    None => groups.push((folder_id, name, vec![row])),
+                }
+            }
+            None => {
+                let mut row = row;
+                row.indent = 0;
+                ungrouped.push(row);
+            }
+        }
     }
 
+    for (folder_id, name, feeds) in groups {
+        let count = feeds.iter().map(|feed| feed.count).sum();
+        rows.push(SidebarRow {
+            id: folder_id.clone(),
+            title: name,
+            folder: String::new(),
+            folder_id: folder_id.clone(),
+            count,
+            icon_url: None,
+            kind: "folder",
+            indent: 0,
+        });
+        streams.push(Stream::Folder(folder_id));
+        for feed in feeds {
+            streams.push(Stream::Feed(feed.id.clone()));
+            rows.push(feed);
+        }
+    }
+    for feed in ungrouped {
+        streams.push(Stream::Feed(feed.id.clone()));
+        rows.push(feed);
+    }
+
+    (rows, streams)
+}
+
+fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) -> Result<()> {
+    let selected = current_stream(state, ui.get_feed_index());
+    let read = article_read_filter(ui.get_article_filter().as_str());
+    let query = ui.get_search_query();
+    let search = Some(query.as_str());
+
+    let feeds = store.feeds()?;
+    let counts = store.feed_counts(read, search)?;
+    let total = store.count_items(&Stream::All, read, search)?;
+    let starred = store.count_items(&Stream::Starred, read, search)?;
+    let (sidebar, streams) = build_sidebar(feeds, &counts, total, starred);
+
+    let mut rows = Vec::with_capacity(sidebar.len());
+    for row in sidebar {
+        let icon = match row.icon_url.as_deref() {
+            Some(url) => {
+                let icon = cached_image(url, ICON_IMAGE_SIZE);
+                if icon.is_none() {
+                    spawn_icon_fetch(ui, store, state, &row.id, url);
+                }
+                icon.unwrap_or_default()
+            }
+            None => slint::Image::default(),
+        };
+        rows.push(FeedRow {
+            id: row.id.into(),
+            title: row.title.into(),
+            folder: row.folder.into(),
+            folder_id: row.folder_id.into(),
+            unread: row.count.clamp(0, i32::MAX as i64) as i32,
+            icon,
+            kind: row.kind.into(),
+            indent: row.indent,
+        });
+    }
+
+    let index = streams
+        .iter()
+        .position(|stream| *stream == selected)
+        .unwrap_or(0);
     state.lock().unwrap().streams = streams;
-    ui.set_feeds(ModelRc::new(VecModel::from(rows)));
+    if let Some(model) = ui.get_feeds().as_any().downcast_ref::<VecModel<FeedRow>>() {
+        model.set_vec(rows);
+    } else {
+        ui.set_feeds(ModelRc::new(VecModel::from(rows)));
+    }
+    ui.set_feed_index(index as i32);
     Ok(())
 }
 
@@ -1223,18 +1341,58 @@ fn same_article_row(a: &ArticleRow, b: &ArticleRow) -> bool {
         && a.selected == b.selected
 }
 
-// Keep feed and "All items" unread badges in sync without re-reading feeds.
-fn adjust_unread(ui: &MainWindow, feed_id: &str, delta: i32) {
+// Keep feed, folder, and "All items" badges in sync without re-reading feeds.
+fn filtered_read_delta(ui: &MainWindow, unread_delta: i32) -> i32 {
+    match ui.get_article_filter().as_str() {
+        "unread" => unread_delta,
+        "read" => -unread_delta,
+        _ => 0,
+    }
+}
+
+fn adjust_unread(ui: &MainWindow, feed_id: &str, unread_delta: i32) {
+    let delta = filtered_read_delta(ui, unread_delta);
+    if delta == 0 {
+        return;
+    }
+    let model = ui.get_feeds();
+    let folder_id = (0..model.row_count()).find_map(|index| {
+        let row = model.row_data(index)?;
+        (row.id.as_str() == feed_id && row.kind.as_str() == "feed")
+            .then(|| row.folder_id.to_string())
+    });
+    for index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(index) else {
+            continue;
+        };
+        let in_folder = !row.folder_id.is_empty()
+            && folder_id.as_deref() == Some(row.folder_id.as_str())
+            && row.kind.as_str() == "folder";
+        if row.id.as_str() == "all" || row.id.as_str() == feed_id || in_folder {
+            row.unread = (row.unread + delta).max(0);
+            model.set_row_data(index, row);
+        }
+    }
+}
+
+fn adjust_starred(ui: &MainWindow, delta: i32) {
+    if delta == 0 {
+        return;
+    }
     let model = ui.get_feeds();
     for index in 0..model.row_count() {
         let Some(mut row) = model.row_data(index) else {
             continue;
         };
-        if row.id.as_str() == "all" || row.id.as_str() == feed_id {
+        if row.id.as_str() == "starred" {
             row.unread = (row.unread + delta).max(0);
             model.set_row_data(index, row);
         }
     }
+}
+
+fn adjust_starred_read(ui: &MainWindow, unread_delta: i32) {
+    adjust_starred(ui, filtered_read_delta(ui, unread_delta));
 }
 
 fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Result<()> {
@@ -1955,14 +2113,23 @@ fn mark_item_read(
     feed_id: &str,
 ) -> Result<()> {
     store.set_read(&[id.to_string()], true)?;
-    {
+    let starred = {
         let mut state = state.lock().unwrap();
+        let starred = state
+            .items
+            .iter()
+            .find(|item| item.id == id)
+            .is_some_and(|item| item.starred);
         if let Some(item) = state.items.iter_mut().find(|item| item.id == id) {
             item.read = true;
         }
-    }
+        starred
+    };
     sync_article_rows(ui, state);
     adjust_unread(ui, feed_id, -1);
+    if starred {
+        adjust_starred_read(ui, -1);
+    }
     Ok(())
 }
 
@@ -2073,6 +2240,7 @@ fn restore_starred(
     }
     set_items_starred(store, state, &starred, true)?;
     set_items_starred(store, state, &unstarred, false)?;
+    adjust_starred(ui, starred.len() as i32 - unstarred.len() as i32);
     sync_article_rows(ui, state);
     Ok(())
 }
@@ -2119,11 +2287,15 @@ fn set_items_read(
     }
     let id_set: HashSet<&str> = ids.iter().map(String::as_str).collect();
     let mut deltas: HashMap<String, i32> = HashMap::new();
+    let mut starred_unread_delta = 0;
     {
         let state = state.lock().unwrap();
         for item in &state.items {
             if id_set.contains(item.id.as_str()) && item.read != read {
                 *deltas.entry(item.feed_id.clone()).or_default() += if read { -1 } else { 1 };
+                if item.starred {
+                    starred_unread_delta += if read { -1 } else { 1 };
+                }
             }
         }
     }
@@ -2142,6 +2314,7 @@ fn set_items_read(
     for (feed_id, delta) in deltas {
         adjust_unread(ui, &feed_id, delta);
     }
+    adjust_starred_read(ui, starred_unread_delta);
     Ok(())
 }
 
@@ -2186,6 +2359,12 @@ fn mark_selected_starred(
         ui.set_status(format!("Update failed: {error}").into());
         return;
     }
+    let delta = if starred {
+        changed_ids.len() as i32
+    } else {
+        -(changed_ids.len() as i32)
+    };
+    adjust_starred(ui, delta);
     sync_article_rows(ui, state);
     record_undo(state, UndoAction::Starred(changes));
     ui.set_status(
@@ -2916,5 +3095,70 @@ mod undo_tests {
         set_items_starred(&store, &state, &["a".to_string()], false).unwrap();
         assert!(!store.item("a").unwrap().unwrap().starred);
         assert!(!state.lock().unwrap().items[0].starred);
+    }
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+
+    fn feed(
+        id: &str,
+        title: &str,
+        folder_id: Option<&str>,
+        folder_name: Option<&str>,
+    ) -> nieuwser_core::store::FeedRow {
+        nieuwser_core::store::FeedRow {
+            id: id.into(),
+            title: title.into(),
+            folder_id: folder_id.map(Into::into),
+            folder_name: folder_name.map(Into::into),
+            unread_count: 0,
+            icon_url: None,
+            html_url: None,
+        }
+    }
+
+    #[test]
+    fn groups_matching_feeds_under_folders_and_hides_empty_ones() {
+        let feeds = vec![
+            feed("feed/1", "One", Some("user/-/label/News"), Some("News")),
+            feed("feed/2", "Two", Some("user/-/label/News"), Some("News")),
+            feed("feed/3", "Three", None, None),
+            feed("feed/4", "Four", Some("user/-/label/Tech"), Some("Tech")),
+        ];
+        let counts = HashMap::from([
+            ("feed/1".to_string(), 2),
+            ("feed/2".to_string(), 0),
+            ("feed/3".to_string(), 1),
+            ("feed/4".to_string(), 0),
+        ]);
+
+        let (rows, streams) = build_sidebar(feeds, &counts, 3, 1);
+
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["all", "starred", "user/-/label/News", "feed/1", "feed/3"]
+        );
+        assert_eq!(
+            streams,
+            vec![
+                Stream::All,
+                Stream::Starred,
+                Stream::Folder("user/-/label/News".into()),
+                Stream::Feed("feed/1".into()),
+                Stream::Feed("feed/3".into()),
+            ]
+        );
+
+        assert_eq!(rows[0].count, 3);
+        assert_eq!(rows[1].count, 1);
+        assert_eq!(rows[2].kind, "folder");
+        assert_eq!(rows[2].count, 2);
+        assert_eq!(rows[2].indent, 0);
+        assert_eq!(rows[3].kind, "feed");
+        assert_eq!(rows[3].indent, 1);
+        assert_eq!(rows[4].indent, 0);
     }
 }
