@@ -27,6 +27,7 @@ struct ReaderView {
 
 struct UiState {
     streams: Vec<Stream>,
+    collapsed_folders: HashSet<String>,
     items: Vec<ItemSummary>,
     selected: HashSet<String>,
     anchor: Option<String>,
@@ -116,6 +117,7 @@ fn main() -> Result<()> {
     ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
         streams: Vec::new(),
+        collapsed_folders: HashSet::new(),
         items: Vec::new(),
         selected: HashSet::new(),
         anchor: None,
@@ -555,6 +557,59 @@ fn bind_callbacks(
         let ui_weak = ui.as_weak();
         let store = store.clone();
         let state = state.clone();
+        ui.on_toggle_folder(move |index| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let folder_id = {
+                let state = state.lock().unwrap();
+                match state.streams.get(index.max(0) as usize) {
+                    Some(Stream::Folder(id)) => id.clone(),
+                    _ => return,
+                }
+            };
+            let collapsing = {
+                let mut state = state.lock().unwrap();
+                if state.collapsed_folders.contains(&folder_id) {
+                    state.collapsed_folders.remove(&folder_id);
+                    false
+                } else {
+                    state.collapsed_folders.insert(folder_id.clone());
+                    true
+                }
+            };
+            let selected_child = collapsing && {
+                let selected = current_stream(&state, ui.get_feed_index());
+                matches!(selected, Stream::Feed(feed_id)
+                if ui
+                    .get_feeds()
+                    .row_data(ui.get_feed_index().max(0) as usize)
+                    .is_some_and(|row| {
+                        row.kind.as_str() == "feed"
+                            && row.folder_id.as_str() == folder_id
+                            && feed_id == row.id.as_str()
+                    }))
+            };
+            if selected_child {
+                ui.set_feed_index(index);
+            }
+            if let Err(error) = refresh_feeds(&ui, &store, &state) {
+                ui.set_status(format!("Load failed: {error}").into());
+                return;
+            }
+            if selected_child {
+                ui.set_compact_page("list".into());
+                if let Err(error) = load_stream(&ui, &store, &state, index) {
+                    ui.set_status(format!("Load failed: {error}").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
         ui.on_select_article(move |index, ctrl, shift| {
             if let Some(ui) = ui_weak.upgrade() {
                 if !apply_selection(&state, index, ctrl, shift) {
@@ -975,11 +1030,13 @@ struct SidebarRow {
     icon_url: Option<String>,
     kind: &'static str,
     indent: i32,
+    collapsed: bool,
 }
 
 fn build_sidebar(
     feeds: Vec<nieuwser_core::store::FeedRow>,
     counts: &HashMap<String, i64>,
+    collapsed: &HashSet<String>,
     total: i64,
     starred: i64,
 ) -> (Vec<SidebarRow>, Vec<Stream>) {
@@ -993,6 +1050,7 @@ fn build_sidebar(
             icon_url: None,
             kind: "all",
             indent: 0,
+            collapsed: false,
         },
         SidebarRow {
             id: "starred".into(),
@@ -1003,6 +1061,7 @@ fn build_sidebar(
             icon_url: None,
             kind: "starred",
             indent: 0,
+            collapsed: false,
         },
     ];
     let mut streams = vec![Stream::All, Stream::Starred];
@@ -1026,6 +1085,7 @@ fn build_sidebar(
             icon_url: feed.icon_url,
             kind: "feed",
             indent: 1,
+            collapsed: false,
         };
         match feed.folder_id {
             Some(folder_id) => {
@@ -1047,6 +1107,7 @@ fn build_sidebar(
 
     for (folder_id, name, feeds) in groups {
         let count = feeds.iter().map(|feed| feed.count).sum();
+        let is_collapsed = collapsed.contains(&folder_id);
         rows.push(SidebarRow {
             id: folder_id.clone(),
             title: name,
@@ -1056,8 +1117,12 @@ fn build_sidebar(
             icon_url: None,
             kind: "folder",
             indent: 0,
+            collapsed: is_collapsed,
         });
         streams.push(Stream::Folder(folder_id));
+        if is_collapsed {
+            continue;
+        }
         for feed in feeds {
             streams.push(Stream::Feed(feed.id.clone()));
             rows.push(feed);
@@ -1081,7 +1146,8 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
     let counts = store.feed_counts(read, search)?;
     let total = store.count_items(&Stream::All, read, search)?;
     let starred = store.count_items(&Stream::Starred, read, search)?;
-    let (sidebar, streams) = build_sidebar(feeds, &counts, total, starred);
+    let collapsed = state.lock().unwrap().collapsed_folders.clone();
+    let (sidebar, streams) = build_sidebar(feeds, &counts, &collapsed, total, starred);
 
     let mut rows = Vec::with_capacity(sidebar.len());
     for row in sidebar {
@@ -1104,6 +1170,7 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
             icon,
             kind: row.kind.into(),
             indent: row.indent,
+            collapsed: row.collapsed,
         });
     }
 
@@ -2881,6 +2948,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
+            collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c")],
             selected: HashSet::from(["old".to_string()]),
             anchor: None,
@@ -2907,6 +2975,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
+            collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c"), summary("d")],
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
@@ -2941,6 +3010,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
+            collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
             selected: HashSet::new(),
             anchor: None,
@@ -2967,6 +3037,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
+            collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
@@ -3009,6 +3080,7 @@ mod undo_tests {
             .unwrap();
         Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
+            collapsed_folders: HashSet::new(),
             items,
             selected: HashSet::new(),
             anchor: None,
@@ -3134,7 +3206,7 @@ mod sidebar_tests {
             ("feed/4".to_string(), 0),
         ]);
 
-        let (rows, streams) = build_sidebar(feeds, &counts, 3, 1);
+        let (rows, streams) = build_sidebar(feeds, &counts, &HashSet::new(), 3, 1);
 
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(
@@ -3157,8 +3229,35 @@ mod sidebar_tests {
         assert_eq!(rows[2].kind, "folder");
         assert_eq!(rows[2].count, 2);
         assert_eq!(rows[2].indent, 0);
+        assert!(!rows[2].collapsed);
         assert_eq!(rows[3].kind, "feed");
         assert_eq!(rows[3].indent, 1);
         assert_eq!(rows[4].indent, 0);
+    }
+
+    #[test]
+    fn collapsed_folders_keep_their_count_but_hide_child_feeds() {
+        let feeds = vec![
+            feed("feed/1", "One", Some("user/-/label/News"), Some("News")),
+            feed("feed/3", "Three", None, None),
+        ];
+        let counts = HashMap::from([("feed/1".to_string(), 2), ("feed/3".to_string(), 1)]);
+        let collapsed = HashSet::from(["user/-/label/News".to_string()]);
+
+        let (rows, streams) = build_sidebar(feeds, &counts, &collapsed, 3, 0);
+
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["all", "starred", "user/-/label/News", "feed/3"]);
+        assert_eq!(
+            streams,
+            vec![
+                Stream::All,
+                Stream::Starred,
+                Stream::Folder("user/-/label/News".into()),
+                Stream::Feed("feed/3".into()),
+            ]
+        );
+        assert_eq!(rows[2].count, 2);
+        assert!(rows[2].collapsed);
     }
 }

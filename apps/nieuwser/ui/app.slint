@@ -9,6 +9,7 @@ export struct FeedRow {
     icon: image,
     kind: string,
     indent: int,
+    collapsed: bool,
 }
 
 export struct ArticleRow {
@@ -392,6 +393,7 @@ component FeedSidebar inherits Rectangle {
     in property <int> selected-index;
     in property <bool> interactive: true;
     callback select-feed(int);
+    callback toggle-folder(int);
     callback context-feed(int, length, length);
     callback context-empty(length, length);
 
@@ -429,7 +431,7 @@ component FeedSidebar inherits Rectangle {
                     spacing: 6px;
 
                     Rectangle {
-                        width: feed.indent * 12px;
+                        width: feed.indent * 8px;
                     }
 
                     if feed.kind == "feed" : Image {
@@ -441,7 +443,7 @@ component FeedSidebar inherits Rectangle {
                     }
 
                     if feed.kind == "folder" : Text {
-                        text: "▸";
+                        text: feed.collapsed ? "▸" : "▾";
                         color: Theme.text-faint;
                         font-size: 11px;
                         vertical-alignment: center;
@@ -478,6 +480,17 @@ component FeedSidebar inherits Rectangle {
                     }
                     clicked => {
                         root.select-feed(i);
+                    }
+                }
+
+                if feed.kind == "folder" : TouchArea {
+                    x: 8px;
+                    y: (parent.height - 20px) / 2;
+                    width: 14px;
+                    height: 20px;
+                    enabled: root.interactive;
+                    clicked => {
+                        root.toggle-folder(i);
                     }
                 }
             }
@@ -592,6 +605,7 @@ export component MainWindow inherits Window {
     callback next-article();
     callback prev-article();
     callback select-feed(int);
+    callback toggle-folder(int);
     callback save-pane-widths(length, length);
     callback select-article(int, bool, bool);
     callback context-article(int);
@@ -921,6 +935,9 @@ export component MainWindow inherits Window {
                     root.select-feed(index);
                     root.compact-page = "list";
                     root.feed-drawer-open = false;
+                }
+                toggle-folder(index) => {
+                    root.toggle-folder(index);
                 }
                 context-feed(index, x, y) => {
                     root.feed-index = index;
@@ -1469,6 +1486,9 @@ export component MainWindow inherits Window {
                 root.select-feed(index);
                 root.compact-page = "list";
                 root.feed-drawer-open = false;
+            }
+            toggle-folder(index) => {
+                root.toggle-folder(index);
             }
             context-feed(index, x, y) => {
                 root.feed-index = index;
