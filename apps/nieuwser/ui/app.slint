@@ -3,6 +3,7 @@ import { Button, CheckBox, LineEdit, ListView, Palette, ScrollView } from "std-w
 export struct FeedRow {
     id: string,
     title: string,
+    full-title: string,
     folder: string,
     folder-id: string,
     unread: int,
@@ -10,6 +11,7 @@ export struct FeedRow {
     kind: string,
     indent: int,
     collapsed: bool,
+    shown: bool,
 }
 
 export struct ArticleRow {
@@ -422,7 +424,8 @@ component FeedSidebar inherits Rectangle {
 
         ListView {
             for feed[i] in root.feeds : Rectangle {
-                height: feed.kind == "folder" ? 32px : 38px;
+                clip: true;
+                height: feed.shown ? (feed.kind == "folder" ? 32px : 38px) : 0px;
                 border-radius: 6px;
                 background: i == root.selected-index ? Theme.feed-selected : transparent;
 

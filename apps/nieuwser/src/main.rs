@@ -266,9 +266,13 @@ fn bind_callbacks(
     runtime: &tokio::runtime::Runtime,
 ) {
     {
+        let ui_weak = ui.as_weak();
         let store = store.clone();
         ui.on_save_pane_widths(move |feed_width, list_width| {
             save_pane_widths(&store, feed_width, list_width);
+            if let Some(ui) = ui_weak.upgrade() {
+                resize_sidebar_titles(&ui);
+            }
         });
     }
 
@@ -555,7 +559,6 @@ fn bind_callbacks(
 
     {
         let ui_weak = ui.as_weak();
-        let store = store.clone();
         let state = state.clone();
         ui.on_toggle_folder(move |index| {
             let Some(ui) = ui_weak.upgrade() else {
@@ -578,30 +581,20 @@ fn bind_callbacks(
                     true
                 }
             };
-            let selected_child = collapsing && {
-                let selected = current_stream(&state, ui.get_feed_index());
-                matches!(selected, Stream::Feed(feed_id)
-                if ui
-                    .get_feeds()
-                    .row_data(ui.get_feed_index().max(0) as usize)
-                    .is_some_and(|row| {
-                        row.kind.as_str() == "feed"
-                            && row.folder_id.as_str() == folder_id
-                            && feed_id == row.id.as_str()
-                    }))
-            };
-            if selected_child {
-                ui.set_feed_index(index);
-            }
-            if let Err(error) = refresh_feeds(&ui, &store, &state) {
-                ui.set_status(format!("Load failed: {error}").into());
-                return;
-            }
-            if selected_child {
-                ui.set_compact_page("list".into());
-                if let Err(error) = load_stream(&ui, &store, &state, index) {
-                    ui.set_status(format!("Load failed: {error}").into());
+            let model = ui.get_feeds();
+            for row_index in 0..model.row_count() {
+                let Some(mut row) = model.row_data(row_index) else {
+                    continue;
+                };
+                if row.folder_id.as_str() != folder_id {
+                    continue;
                 }
+                match row.kind.as_str() {
+                    "folder" => row.collapsed = collapsing,
+                    "feed" => row.shown = !collapsing,
+                    _ => continue,
+                }
+                model.set_row_data(row_index, row);
             }
         });
     }
@@ -1031,6 +1024,7 @@ struct SidebarRow {
     kind: &'static str,
     indent: i32,
     collapsed: bool,
+    shown: bool,
 }
 
 fn build_sidebar(
@@ -1051,6 +1045,7 @@ fn build_sidebar(
             kind: "all",
             indent: 0,
             collapsed: false,
+            shown: true,
         },
         SidebarRow {
             id: "starred".into(),
@@ -1062,6 +1057,7 @@ fn build_sidebar(
             kind: "starred",
             indent: 0,
             collapsed: false,
+            shown: true,
         },
     ];
     let mut streams = vec![Stream::All, Stream::Starred];
@@ -1076,6 +1072,10 @@ fn build_sidebar(
         if count == 0 {
             continue;
         }
+        let shown = feed
+            .folder_id
+            .as_deref()
+            .is_none_or(|folder_id| !collapsed.contains(folder_id));
         let row = SidebarRow {
             id: feed.id.clone(),
             title: feed.title,
@@ -1086,6 +1086,7 @@ fn build_sidebar(
             kind: "feed",
             indent: 1,
             collapsed: false,
+            shown,
         };
         match feed.folder_id {
             Some(folder_id) => {
@@ -1118,11 +1119,9 @@ fn build_sidebar(
             kind: "folder",
             indent: 0,
             collapsed: is_collapsed,
+            shown: true,
         });
         streams.push(Stream::Folder(folder_id));
-        if is_collapsed {
-            continue;
-        }
         for feed in feeds {
             streams.push(Stream::Feed(feed.id.clone()));
             rows.push(feed);
@@ -1134,6 +1133,43 @@ fn build_sidebar(
     }
 
     (rows, streams)
+}
+
+fn sidebar_title_budget(feed_width: f32) -> usize {
+    (((feed_width.max(160.0) - 118.0) / 7.0).floor() as usize).clamp(8, 64)
+}
+
+fn shorten_title(title: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = title.chars().collect();
+    if chars.len() <= max_chars {
+        return title.into();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let left = (keep * 3 / 5).max(1);
+    let right = keep - left;
+    let mut shortened = String::with_capacity(max_chars * 4);
+    shortened.extend(&chars[..left]);
+    shortened.push('…');
+    shortened.extend(&chars[chars.len() - right..]);
+    shortened
+}
+
+fn resize_sidebar_titles(ui: &MainWindow) {
+    let budget = sidebar_title_budget(ui.get_feed_width());
+    let model = ui.get_feeds();
+    for index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(index) else {
+            continue;
+        };
+        if row.kind.as_str() != "feed" && row.kind.as_str() != "folder" {
+            continue;
+        }
+        let title = shorten_title(row.full_title.as_str(), budget);
+        if row.title.as_str() != title {
+            row.title = title.into();
+            model.set_row_data(index, row);
+        }
+    }
 }
 
 fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) -> Result<()> {
@@ -1148,6 +1184,7 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
     let starred = store.count_items(&Stream::Starred, read, search)?;
     let collapsed = state.lock().unwrap().collapsed_folders.clone();
     let (sidebar, streams) = build_sidebar(feeds, &counts, &collapsed, total, starred);
+    let title_budget = sidebar_title_budget(ui.get_feed_width());
 
     let mut rows = Vec::with_capacity(sidebar.len());
     for row in sidebar {
@@ -1161,9 +1198,16 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
             }
             None => slint::Image::default(),
         };
+        let full_title = row.title;
+        let title = if row.kind == "feed" || row.kind == "folder" {
+            shorten_title(&full_title, title_budget)
+        } else {
+            full_title.clone()
+        };
         rows.push(FeedRow {
             id: row.id.into(),
-            title: row.title.into(),
+            title: title.into(),
+            full_title: full_title.into(),
             folder: row.folder.into(),
             folder_id: row.folder_id.into(),
             unread: row.count.clamp(0, i32::MAX as i64) as i32,
@@ -1171,6 +1215,7 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
             kind: row.kind.into(),
             indent: row.indent,
             collapsed: row.collapsed,
+            shown: row.shown,
         });
     }
 
@@ -3236,7 +3281,7 @@ mod sidebar_tests {
     }
 
     #[test]
-    fn collapsed_folders_keep_their_count_but_hide_child_feeds() {
+    fn collapsed_folders_keep_their_count_and_collapse_children() {
         let feeds = vec![
             feed("feed/1", "One", Some("user/-/label/News"), Some("News")),
             feed("feed/3", "Three", None, None),
@@ -3247,17 +3292,33 @@ mod sidebar_tests {
         let (rows, streams) = build_sidebar(feeds, &counts, &collapsed, 3, 0);
 
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-        assert_eq!(ids, vec!["all", "starred", "user/-/label/News", "feed/3"]);
+        assert_eq!(
+            ids,
+            vec!["all", "starred", "user/-/label/News", "feed/1", "feed/3"]
+        );
         assert_eq!(
             streams,
             vec![
                 Stream::All,
                 Stream::Starred,
                 Stream::Folder("user/-/label/News".into()),
+                Stream::Feed("feed/1".into()),
                 Stream::Feed("feed/3".into()),
             ]
         );
         assert_eq!(rows[2].count, 2);
         assert!(rows[2].collapsed);
+        assert!(!rows[3].shown);
+        assert!(rows[4].shown);
+    }
+
+    #[test]
+    fn shortens_long_titles_from_the_middle() {
+        assert_eq!(shorten_title("Hacker News", 20), "Hacker News");
+        let shortened = shorten_title("The Very Long Feed Name Substack", 24);
+        assert_eq!(shortened.chars().count(), 24);
+        assert!(shortened.starts_with("The Very Long"));
+        assert!(shortened.ends_with("Substack"));
+        assert!(shortened.contains('…'));
     }
 }
