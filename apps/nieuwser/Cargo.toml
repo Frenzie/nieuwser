@@ -16,3 +16,6 @@ tokio.workspace = true
 [build-dependencies]
 slint-build.workspace = true
 winresource = "0.1"
+
+[dev-dependencies]
+i-slint-core = "1.18"

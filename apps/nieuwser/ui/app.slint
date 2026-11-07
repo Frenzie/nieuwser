@@ -45,6 +45,8 @@ export global Theme {
     out property <color> text-muted: dark ? #a3a39a : #6b6b66;
     out property <color> text-faint: dark ? #7c7c74 : #999990;
     out property <color> border: dark ? #34342f : #e2e2de;
+    out property <color> scrollbar-thumb: dark ? #ffffff14 : #00000073;
+    out property <color> scrollbar-track: dark ? #2c2c2c : #f0f0f0;
     out property <color> divider: dark ? #2b2b27 : #ecece8;
     out property <color> feed-selected: dark ? #2b3a4d : #e6edf7;
     out property <color> article-selected: dark ? #263141 : #eef3fa;
@@ -531,7 +533,13 @@ export component MainWindow inherits Window {
     private property <bool> reader-gesture-at-top: false;
     private property <bool> reader-gesture-at-bottom: false;
     private property <bool> reader-at-top: reader-scroll.content-y >= 0px - 1px;
-    private property <bool> reader-at-bottom: reader-scroll.content-y <= reader-scroll.visible-height - reader-scroll.content-height + 1px;
+    private property <bool> reader-at-bottom: reader-scroll.content-y <= reader-scroll.height - reader-scroll.content-height + 1px;
+    private property <bool> reader-scrollbar-dragging: false;
+    private property <length> reader-scrollbar-drag-start-y: 0px;
+    private property <length> reader-scrollbar-drag-start-content-y: 0px;
+    private property <length> reader-scroll-max: reader-scroll.content-height - reader-scroll.height;
+    private property <length> reader-scroll-track: Math.max(1px, reader-frame.height - 32px);
+    private property <length> reader-scroll-thumb-height: Math.max(Math.min(16px, reader-frame.height), reader-scroll-track * reader-scroll.height / reader-scroll.content-height);
     property <length> drag-start-x;
     property <length> drag-start-width;
     property <length> max-feed-width: root.width - root.list-width - 340px < 160px ? 160px : root.width - root.list-width - 340px;
@@ -654,7 +662,7 @@ export component MainWindow inherits Window {
     scroll-reader(delta) => {
         reader-scroll.content-y = Math.min(0px, Math.max(
             reader-scroll.content-y + delta,
-            reader-scroll.visible-height - reader-scroll.content-height));
+            reader-scroll.height - reader-scroll.content-height));
     }
 
     public function scroll-reader-to-top() {
@@ -772,16 +780,16 @@ export component MainWindow inherits Window {
                 root.return-to-list();
                 accept
             } else if (event.text == Key.PageDown) {
-                root.nav-press(false, 0px - reader-scroll.visible-height * 0.9);
+                root.nav-press(false, 0px - reader-scroll.height * 0.9);
                 accept
             } else if (event.text == " " && !event.modifiers.shift) {
-                root.nav-press(false, 0px - reader-scroll.visible-height * 0.9);
+                root.nav-press(false, 0px - reader-scroll.height * 0.9);
                 accept
             } else if (event.text == Key.PageUp) {
-                root.nav-press(true, reader-scroll.visible-height * 0.9);
+                root.nav-press(true, reader-scroll.height * 0.9);
                 accept
             } else if (event.text == " " && event.modifiers.shift) {
-                root.nav-press(true, reader-scroll.visible-height * 0.9);
+                root.nav-press(true, reader-scroll.height * 0.9);
                 accept
             } else if (event.text == Key.Home) {
                 reader-scroll.content-y = 0px;
@@ -1169,18 +1177,92 @@ export component MainWindow inherits Window {
                 clip: true;
                 background: Theme.surface;
 
-                SelectionContext {
+                reader-context := SelectionContext {
                     has-selection: root.article-index >= 0;
                     open-requested => { root.open-selection(); }
                     copy-requested => { root.copy-selection-links(); }
                     set-read(value) => { root.set-selection-read(value); }
                     set-starred(value) => { root.set-selection-starred(value); }
 
-                Rectangle {
-                    x: root.reader-swipe-x;
-                    y: root.reader-swipe-y;
+                // Wrap the content so drags that start on images still reach the gesture handler.
+                SwipeGestureHandler {
+                    enabled: root.compact;
+                    x: 0px;
+                    y: root.compact ? 66px : 0px;
                     width: parent.width;
-                    height: parent.height;
+                    height: root.compact ? parent.height - 66px : parent.height;
+                    handle-swipe-right: true;
+                    handle-swipe-up: true;
+                    handle-swipe-down: true;
+                    moved => {
+                        if (self.swiping) {
+                            if (!root.reader-gesture-tracked) {
+                                root.reader-gesture-tracked = true;
+                                root.reader-gesture-last-dy = 0px;
+                                root.reader-gesture-at-top = root.reader-at-top;
+                                root.reader-gesture-at-bottom = root.reader-at-bottom;
+                            }
+                            let dx = self.current-position.x - self.pressed-position.x;
+                            let dy = self.current-position.y - self.pressed-position.y;
+                            let delta = dy - root.reader-gesture-last-dy;
+                            root.reader-gesture-last-dy = dy;
+                            if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
+                                if (abs(dx) > abs(dy)) {
+                                    root.reader-gesture-horizontal = true;
+                                } else {
+                                    root.reader-gesture-vertical = true;
+                                }
+                            }
+                            if (root.reader-gesture-horizontal) {
+                                root.reader-swipe-x = Math.max(0px, Math.min(parent.width / 3, dx));
+                                root.reader-swipe-y = 0px;
+                            } else if ((root.reader-gesture-at-bottom && dy < 0px)
+                                || (root.reader-gesture-at-top && dy > 0px)) {
+                                root.reader-swipe-x = 0px;
+                                root.reader-swipe-y = Math.max(0px - parent.height / 3, Math.min(
+                                    parent.height / 3, dy));
+                            } else {
+                                root.reader-swipe-x = 0px;
+                                root.reader-swipe-y = 0px;
+                                reader-scroll.content-y = Math.max(
+                                    reader-scroll.height - reader-scroll.content-height,
+                                    Math.min(0px, reader-scroll.content-y + delta));
+                            }
+                        }
+                    }
+                    swiped => {
+                        let dx = self.current-position.x - self.pressed-position.x;
+                        let dy = self.current-position.y - self.pressed-position.y;
+                        root.reader-swipe-x = 0px;
+                        root.reader-swipe-y = 0px;
+                        if (root.reader-gesture-horizontal) {
+                            if (dx > 80px) {
+                                root.return-to-list();
+                            }
+                        } else if (root.reader-gesture-at-bottom && dy < -80px) {
+                            root.next-article();
+                        } else if (root.reader-gesture-at-top && dy > 80px) {
+                            root.prev-article();
+                        }
+                        root.reader-gesture-tracked = false;
+                        root.reader-gesture-horizontal = false;
+                        root.reader-gesture-vertical = false;
+                        root.reader-gesture-last-dy = 0px;
+                    }
+                    cancelled => {
+                        root.reader-swipe-x = 0px;
+                        root.reader-swipe-y = 0px;
+                        root.reader-gesture-tracked = false;
+                        root.reader-gesture-horizontal = false;
+                        root.reader-gesture-vertical = false;
+                        root.reader-gesture-last-dy = 0px;
+                    }
+
+                Rectangle {
+                    x: root.compact ? root.reader-swipe-x : 0px;
+                    y: root.compact ? root.reader-swipe-y - 66px : 0px;
+                    width: parent.width;
+                    height: root.compact ? parent.height + 66px : parent.height;
                     background: Theme.surface;
 
                 VerticalLayout {
@@ -1231,7 +1313,14 @@ export component MainWindow inherits Window {
                     reader-frame := Rectangle {
                         clip: true;
 
-                        reader-scroll := ListView {
+                        reader-scroll := Flickable {
+                            interactive: !root.compact;
+                            content-height: reader-content.preferred-height;
+                            content-width: self.width;
+
+                            reader-content := VerticalLayout {
+                                width: reader-scroll.width;
+
                             for block in root.reader-blocks : VerticalLayout {
                                 spacing: 4px;
                                 padding-bottom: 8px;
@@ -1241,7 +1330,7 @@ export component MainWindow inherits Window {
                                     font-size: 24px;
                                     font-weight: 700;
                                     wrap: word-wrap;
-                                    width: reader-scroll.visible-width;
+                                    width: reader-scroll.width;
                                 }
 
                                 if block.kind == "meta" : Text {
@@ -1249,7 +1338,7 @@ export component MainWindow inherits Window {
                                     color: Theme.text-muted;
                                     font-size: 12px;
                                     wrap: word-wrap;
-                                    width: reader-scroll.visible-width;
+                                    width: reader-scroll.width;
                                 }
 
                                 if block.kind == "empty" : Text {
@@ -1257,7 +1346,7 @@ export component MainWindow inherits Window {
                                     color: Theme.text-faint;
                                     font-size: 13px;
                                     wrap: word-wrap;
-                                    width: reader-scroll.visible-width;
+                                    width: reader-scroll.width;
                                 }
 
                                 if block.kind == "rule" : Rectangle {
@@ -1286,7 +1375,7 @@ export component MainWindow inherits Window {
                                         if !block.has-image : ReaderText {
                                             text: block.text;
                                             kind: block.kind;
-                                            width: reader-scroll.visible-width - 40px;
+                                            width: reader-scroll.width - 40px;
                                             link-clicked(link) => {
                                                 root.open-link(link);
                                             }
@@ -1312,7 +1401,7 @@ export component MainWindow inherits Window {
                                             for chunk in block.chunks : ReaderText {
                                                 text: chunk;
                                                 kind: block.kind;
-                                                width: reader-scroll.visible-width - 40px;
+                                                width: reader-scroll.width - 40px;
                                             }
                                         }
                                     }
@@ -1344,7 +1433,7 @@ export component MainWindow inherits Window {
                                             text: chunk;
                                             kind: block.kind;
                                             // Slint 1.18 measures wrapped text at its unconstrained width.
-                                            width: reader-scroll.visible-width - 20px - block.indent * 18px
+                                            width: reader-scroll.width - 20px - block.indent * 18px
                                                 - (block.kind == "quote" ? 11px : 0px)
                                                 - (block.label != "" ? 38px : 0px);
                                             link-clicked(link) => {
@@ -1353,6 +1442,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
+                            }
                             }
                         }
                         if root.reader-loading : ReaderSkeleton { }
@@ -1365,7 +1455,51 @@ export component MainWindow inherits Window {
                     }
                 }
                 }
+                }
 
+                if reader-scroll.content-height > reader-scroll.height : Rectangle {
+                    x: reader-frame.absolute-position.x - reader-context.absolute-position.x + reader-frame.width - 14px;
+                    y: reader-frame.absolute-position.y - reader-context.absolute-position.y;
+                    width: 14px;
+                    height: reader-frame.height;
+                    background: track-touch.has-hover ? Theme.scrollbar-track : transparent;
+                    border-radius: 7px;
+
+                    Rectangle {
+                        width: track-touch.has-hover ? 6px : 2px;
+                        x: parent.width - 4px - self.width;
+                        height: root.reader-scroll-thumb-height;
+                        y: 16px + (root.reader-scroll-track - self.height) * ((0px - reader-scroll.content-y) / root.reader-scroll-max);
+                        border-radius: self.width / 2;
+                        background: Theme.scrollbar-thumb;
+                        animate width { duration: 150ms; easing: ease-out; }
+                    }
+
+                    track-touch := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        pointer-event(event) => {
+                            if (event.button == PointerEventButton.left) {
+                                if (event.kind == PointerEventKind.down) {
+                                    root.reader-scrollbar-dragging = true;
+                                    root.reader-scrollbar-drag-start-y = self.mouse-y;
+                                    root.reader-scrollbar-drag-start-content-y = reader-scroll.content-y;
+                                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                    root.reader-scrollbar-dragging = false;
+                                }
+                            }
+                        }
+                        moved => {
+                            if (root.reader-scrollbar-dragging) {
+                                let delta = self.mouse-y - root.reader-scrollbar-drag-start-y;
+                                let travel = Math.max(1px, root.reader-scroll-track - root.reader-scroll-thumb-height);
+                                reader-scroll.content-y = Math.min(0px, Math.max(
+                                    0px - root.reader-scroll-max,
+                                    root.reader-scrollbar-drag-start-content-y - delta * root.reader-scroll-max / travel));
+                            }
+                        }
+                    }
+                }
                 if root.compact && root.reader-prev-title != "" : ReaderPreview {
                     x: root.reader-swipe-x;
                     y: 0px - parent.height + root.reader-swipe-y;
@@ -1388,78 +1522,6 @@ export component MainWindow inherits Window {
                     excerpt: root.reader-next-excerpt;
                 }
 
-                if root.compact : SwipeGestureHandler {
-                    x: 0px;
-                    y: 66px;
-                    width: parent.width;
-                    height: parent.height - 66px;
-                    handle-swipe-right: true;
-                    handle-swipe-up: true;
-                    handle-swipe-down: true;
-                    moved => {
-                        if (self.swiping) {
-                            if (!root.reader-gesture-tracked) {
-                                root.reader-gesture-tracked = true;
-                                root.reader-gesture-last-dy = 0px;
-                                root.reader-gesture-at-top = root.reader-at-top;
-                                root.reader-gesture-at-bottom = root.reader-at-bottom;
-                            }
-                            let dx = self.current-position.x - self.pressed-position.x;
-                            let dy = self.current-position.y - self.pressed-position.y;
-                            let delta = dy - root.reader-gesture-last-dy;
-                            root.reader-gesture-last-dy = dy;
-                            if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
-                                if (abs(dx) > abs(dy)) {
-                                    root.reader-gesture-horizontal = true;
-                                } else {
-                                    root.reader-gesture-vertical = true;
-                                }
-                            }
-                            if (root.reader-gesture-horizontal) {
-                                root.reader-swipe-x = Math.max(0px, Math.min(parent.width / 3, dx));
-                                root.reader-swipe-y = 0px;
-                            } else if ((root.reader-gesture-at-bottom && dy < 0px)
-                                || (root.reader-gesture-at-top && dy > 0px)) {
-                                root.reader-swipe-x = 0px;
-                                root.reader-swipe-y = Math.max(0px - parent.height / 3, Math.min(
-                                    parent.height / 3, dy));
-                            } else {
-                                root.reader-swipe-x = 0px;
-                                root.reader-swipe-y = 0px;
-                                reader-scroll.content-y = Math.max(
-                                    reader-scroll.visible-height - reader-scroll.content-height,
-                                    Math.min(0px, reader-scroll.content-y + delta));
-                            }
-                        }
-                    }
-                    swiped => {
-                        let dx = self.current-position.x - self.pressed-position.x;
-                        let dy = self.current-position.y - self.pressed-position.y;
-                        root.reader-swipe-x = 0px;
-                        root.reader-swipe-y = 0px;
-                        if (root.reader-gesture-horizontal) {
-                            if (dx > 80px) {
-                                root.return-to-list();
-                            }
-                        } else if (root.reader-gesture-at-bottom && dy < -80px) {
-                            root.next-article();
-                        } else if (root.reader-gesture-at-top && dy > 80px) {
-                            root.prev-article();
-                        }
-                        root.reader-gesture-tracked = false;
-                        root.reader-gesture-horizontal = false;
-                        root.reader-gesture-vertical = false;
-                        root.reader-gesture-last-dy = 0px;
-                    }
-                    cancelled => {
-                        root.reader-swipe-x = 0px;
-                        root.reader-swipe-y = 0px;
-                        root.reader-gesture-tracked = false;
-                        root.reader-gesture-horizontal = false;
-                        root.reader-gesture-vertical = false;
-                        root.reader-gesture-last-dy = 0px;
-                    }
-                }
             }
         }
         }

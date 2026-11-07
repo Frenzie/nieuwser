@@ -2782,23 +2782,31 @@ mod reader_layout_tests {
         let ui = MainWindow::new().unwrap();
         ui.window().set_size(slint::PhysicalSize::new(1000, 800));
 
-        let blocks: Vec<ReaderBlock> = (0..300)
-            .map(|index| {
-                let text = StyledText::from_plain_text(&format!(
-                    "Paragraph {index}: Lorem ipsum dolor sit amet, consectetur adipiscing elit."
-                ));
-                ReaderBlock {
-                    kind: "p".into(),
-                    label: "".into(),
-                    text: text.clone(),
-                    chunks: ModelRc::new(VecModel::from(vec![text])),
-                    indent: 0,
-                    source: "".into(),
-                    image: slint::Image::default(),
-                    has_image: false,
-                }
-            })
-            .collect();
+        let mut blocks: Vec<ReaderBlock> = vec![ReaderBlock {
+            kind: "image".into(),
+            label: "Image".into(),
+            text: StyledText::default(),
+            chunks: ModelRc::new(VecModel::from(Vec::<StyledText>::new())),
+            indent: 0,
+            source: "".into(),
+            image: image_from_rgba(vec![255, 0, 0, 255], 1, 1),
+            has_image: true,
+        }];
+        blocks.extend((0..300).map(|index| {
+            let text = StyledText::from_plain_text(&format!(
+                "Paragraph {index}: Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+            ));
+            ReaderBlock {
+                kind: "p".into(),
+                label: "".into(),
+                text: text.clone(),
+                chunks: ModelRc::new(VecModel::from(vec![text])),
+                indent: 0,
+                source: "".into(),
+                image: slint::Image::default(),
+                has_image: false,
+            }
+        }));
         let rows = make_reader_rows("A long article", "Example feed", blocks);
         ui.set_reader_blocks(ModelRc::new(VecModel::from(rows)));
         ui.show().unwrap();
@@ -2944,9 +2952,41 @@ mod reader_layout_tests {
             slint::platform::update_timers_and_animations();
         };
 
+        let touch_drag = |from: (f32, f32), to: (f32, f32)| {
+            use i_slint_core::input::TouchPhase;
+            let pos = |p: (f32, f32)| i_slint_core::lengths::LogicalPoint::new(p.0, p.1);
+            let touch = |point, phase| {
+                slint::platform::WindowEvent::internal(slint::platform::InternalEvent::Touch {
+                    id: 0,
+                    position: point,
+                    phase,
+                })
+            };
+            ui.window()
+                .dispatch_event(touch(pos(from), TouchPhase::Started));
+            for step in 1..=4 {
+                let progress = step as f32 / 4.0;
+                let x = from.0 + (to.0 - from.0) * progress;
+                let y = from.1 + (to.1 - from.1) * progress;
+                ui.window()
+                    .dispatch_event(touch(pos((x, y)), TouchPhase::Moved));
+                slint::platform::update_timers_and_animations();
+            }
+            ui.window()
+                .dispatch_event(touch(pos(to), TouchPhase::Ended));
+            slint::platform::update_timers_and_animations();
+        };
+
         ui.window().set_size(slint::PhysicalSize::new(600, 700));
         ui.set_compact_page("reader".into());
         ui.set_article_index(50);
+
+        // Dragging upward over the image at the top scrolls instead of navigating.
+        ui.invoke_scroll_reader(100_000.0);
+        let image_before = ui.window().take_snapshot().unwrap();
+        touch_drag((300.0, 400.0), (300.0, 260.0));
+        let image_after = ui.window().take_snapshot().unwrap();
+        assert_ne!(image_before.as_bytes(), image_after.as_bytes());
 
         // A downward swipe at the top goes to the previous article.
         ui.invoke_scroll_reader(100_000.0);
