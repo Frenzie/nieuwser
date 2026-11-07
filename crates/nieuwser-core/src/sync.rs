@@ -35,6 +35,10 @@ pub struct SyncReport {
     pub feeds: usize,
     pub unread: i64,
     pub duration_ms: u128,
+    pub push_ms: u128,
+    pub pull_ms: u128,
+    pub reconcile_ms: u128,
+    pub backfill_ms: u128,
 }
 
 impl fmt::Display for SyncReport {
@@ -53,7 +57,11 @@ impl fmt::Display for SyncReport {
         if self.evicted > 0 {
             write!(f, ", {} bodies evicted", self.evicted)?;
         }
-        write!(f, ", {} ms", self.duration_ms)
+        write!(
+            f,
+            ", {} ms (push {} ms, pull {} ms, reconcile {} ms, backfill {} ms)",
+            self.duration_ms, self.push_ms, self.pull_ms, self.reconcile_ms, self.backfill_ms
+        )
     }
 }
 
@@ -79,8 +87,12 @@ impl SyncEngine {
 
     pub async fn sync(&mut self) -> Result<SyncReport> {
         let started = Instant::now();
+        let push_started = Instant::now();
         let pushed_ops = self.push_outbox().await?;
+        let push_ms = push_started.elapsed().as_millis();
 
+        let pull_started = Instant::now();
+        let pull_started_epoch = now();
         let subscriptions = self.client.subscriptions().await?;
         let tags = self.client.tags().await?;
         let counts = self.client.unread_counts().await?;
@@ -93,7 +105,6 @@ impl SyncEngine {
         } else {
             INITIAL_SYNC_ITEMS
         };
-        let pull_started = now();
         let (new_items, all_updated) = self.pull_stream(Stream::All, ot, max_items).await?;
         let starred_max = if ot.is_some() {
             usize::MAX
@@ -102,12 +113,17 @@ impl SyncEngine {
         };
         let (starred_items, starred_updated) =
             self.pull_stream(Stream::Starred, ot, starred_max).await?;
+        let pull_ms = pull_started.elapsed().as_millis();
+
+        let reconcile_started = Instant::now();
         let unread_remote = self.reconcile_read(&counts).await?;
         let starred_remote = self.reconcile_starred().await?;
+        let reconcile_ms = reconcile_started.elapsed().as_millis();
 
         // Organic pulls only cover new/modified items. State changes on older
         // articles (and starred items beyond the initial window) need content
         // fetched by ID.
+        let backfill_started = Instant::now();
         let mut backfilled = 0;
         if let Some(remote) = &starred_remote {
             backfilled = self.backfill_missing(remote, BACKFILL_LIMIT).await?;
@@ -118,13 +134,19 @@ impl SyncEngine {
                 backfilled += self.backfill_missing(remote, remaining).await?;
             }
         }
+        let backfill_ms = backfill_started.elapsed().as_millis();
+
         let evicted = self.store.enforce_cache_budget(DEFAULT_CACHE_BYTES)?;
 
         let unread = self.store.total_unread()?;
         let failed_ops = self.store.dead_outbox_count()?;
-        self.store.set_state("last_sync_at", &now().to_string())?;
+        let finished = now();
+        self.store
+            .set_state("last_sync_at", &finished.to_string())?;
+        self.store
+            .set_state("last_contact_at", &finished.to_string())?;
         let server_time = all_updated.or(starred_updated).filter(|time| *time > 0);
-        let next = (server_time.unwrap_or(pull_started) - WATERMARK_OVERLAP_SECONDS).max(0);
+        let next = (server_time.unwrap_or(pull_started_epoch) - WATERMARK_OVERLAP_SECONDS).max(0);
         self.store.set_state("ot_watermark", &next.to_string())?;
 
         Ok(SyncReport {
@@ -137,7 +159,21 @@ impl SyncEngine {
             feeds: subscriptions.len(),
             unread,
             duration_ms: started.elapsed().as_millis(),
+            push_ms,
+            pull_ms,
+            reconcile_ms,
+            backfill_ms,
         })
+    }
+
+    /// Replays queued local changes without pulling remote state.
+    pub async fn push_pending(&mut self) -> Result<usize> {
+        let pushed = self.push_outbox().await?;
+        if pushed > 0 {
+            self.store
+                .set_state("last_contact_at", &now().to_string())?;
+        }
+        Ok(pushed)
     }
 
     async fn pull_stream(
@@ -625,6 +661,25 @@ mod tests {
         assert_eq!(report.pushed_ops, 2);
         assert!(store.outbox(10).unwrap().is_empty());
         assert_eq!(store.dead_outbox_count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn push_pending_flushes_outbox_without_touching_pull_state() {
+        let server = MockServer::start().await;
+        let base = format!("{}/api/greader.php", server.uri());
+        mount_minimal_sync(&server).await;
+        mount_edit_tag(&server, vec![200]).await;
+
+        let store = store_with_read_op();
+        store.set_state("last_sync_at", "1000").unwrap();
+        let mut engine = SyncEngine::with_auth(store.clone(), &base, "secret").unwrap();
+        assert_eq!(engine.push_pending().await.unwrap(), 1);
+        assert!(store.outbox(10).unwrap().is_empty());
+        assert_eq!(
+            store.state("last_sync_at").unwrap().as_deref(),
+            Some("1000")
+        );
+        assert!(store.state("last_contact_at").unwrap().is_some());
     }
 
     #[tokio::test]
