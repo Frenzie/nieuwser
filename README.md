@@ -102,8 +102,29 @@ cargo fmt --all --check
 ```
 
 `cargo build -p nieuwser` is the quickest way to build the app; avoid
-`--workspace` while iterating. CI uses `Swatinem/rust-cache`; locally, optional
-`sccache` and `mold`/`lld` can speed up clean builds and linking.
+`--workspace` while iterating.
+
+### Optional compiler cache
+
+For clean builds, install [sccache](https://github.com/mozilla/sccache):
+
+```sh
+cargo binstall sccache   # or: cargo install --locked sccache
+```
+
+The Makefile uses it automatically when it is on `PATH` and `RUSTC_WRAPPER`
+is not already set:
+
+```sh
+make build
+make sccache-stats
+```
+
+To use it outside `make`, set `RUSTC_WRAPPER=sccache`. `SCCACHE_DIR` selects
+the local cache directory; sccache can also use shared backends such as S3 or
+GCS. Cargo's incremental `target/` cache already covers normal local rebuilds,
+so sccache mainly helps clean builds and sharing results across checkouts.
+`mold`/`lld` can additionally speed up linking.
 
 Current status and open work are tracked in [PLAN.md](PLAN.md).
 
