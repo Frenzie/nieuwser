@@ -200,9 +200,23 @@ fn main() -> Result<()> {
         },
     );
 
+    let synced_ui = ui.as_weak();
+    let synced_store = store.clone();
+    let synced_timer = slint::Timer::default();
+    synced_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(15),
+        move || {
+            if let Some(ui) = synced_ui.upgrade() {
+                ui.set_last_synced(last_synced_text(&synced_store).into());
+            }
+        },
+    );
+
     ui.run()?;
     save_pane_widths(&store, ui.get_feed_width(), ui.get_list_width());
     let restart = RESTART_REQUESTED.swap(false, Ordering::SeqCst);
+    drop(synced_timer);
     drop(timer);
     drop(ui);
     drop(state);
@@ -1054,14 +1068,39 @@ fn save_pane_widths(store: &Store, feed_width: f32, list_width: f32) {
 }
 
 fn last_synced_text(store: &Store) -> String {
-    match store
-        .state("last_sync_at")
+    let timestamp = store
+        .state("last_contact_at")
         .ok()
         .flatten()
-        .and_then(|value| value.parse::<i64>().ok())
-    {
-        Some(ts) => format!("Last sync {}", relative_time(ts)),
+        .or_else(|| store.state("last_sync_at").ok().flatten())
+        .and_then(|value| value.parse::<i64>().ok());
+    match timestamp {
+        Some(ts) => format!("Synced {}", sync_age(ts)),
         None => "Never synced".into(),
+    }
+}
+
+fn sync_age(secs: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    sync_age_at(secs, now)
+}
+
+fn sync_age_at(secs: i64, now: i64) -> String {
+    if secs <= 0 {
+        return "just now".into();
+    }
+    let delta = (now - secs).max(0);
+    if delta < 60 {
+        "just now".into()
+    } else if delta < 3_600 {
+        format!("{}m ago", delta / 60)
+    } else if delta < 86_400 {
+        format!("{}h ago", delta / 3_600)
+    } else {
+        format!("{}d ago", delta / 86_400)
     }
 }
 
@@ -3717,5 +3756,20 @@ mod sidebar_tests {
         assert!(shortened.starts_with("The Very Long"));
         assert!(shortened.ends_with("Substack"));
         assert!(shortened.contains('…'));
+    }
+}
+
+#[cfg(test)]
+mod sync_label_tests {
+    use super::*;
+
+    #[test]
+    fn formats_sync_age() {
+        let now = 1_000_000;
+        assert_eq!(sync_age_at(now, now), "just now");
+        assert_eq!(sync_age_at(now - 59, now), "just now");
+        assert_eq!(sync_age_at(now - 60, now), "1m ago");
+        assert_eq!(sync_age_at(now - 3_600, now), "1h ago");
+        assert_eq!(sync_age_at(now - 86_400, now), "1d ago");
     }
 }
