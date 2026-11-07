@@ -33,6 +33,7 @@ struct UiState {
     selected: HashSet<String>,
     anchor: Option<String>,
     handle: tokio::runtime::Handle,
+    push_generation: u64,
     pending_icons: HashSet<String>,
     pending_media: HashSet<String>,
     undo: VecDeque<UndoAction>,
@@ -73,6 +74,7 @@ static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 const ARTICLE_PAGE: i64 = 300;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
+const PUSH_DEBOUNCE: Duration = Duration::from_secs(2);
 const ICON_IMAGE_SIZE: u32 = 64;
 const READER_IMAGE_SIZE: u32 = 1024;
 const IMAGE_CACHE_LIMIT: usize = 48;
@@ -91,6 +93,9 @@ const SHORTCUTS: [(&str, &str, &str); 5] = [
 
 static IMAGE_FETCH_SLOTS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(4));
+
+static REMOTE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 thread_local! {
     // HashMap::new is not const on the supported Rust version.
@@ -124,6 +129,7 @@ fn main() -> Result<()> {
         selected: HashSet::new(),
         anchor: None,
         handle: runtime.handle().clone(),
+        push_generation: 0,
         pending_icons: HashSet::new(),
         pending_media: HashSet::new(),
         undo: VecDeque::new(),
@@ -756,6 +762,7 @@ fn bind_callbacks(
             state.lock().unwrap().undo.clear();
             let _ = refresh_feeds(&ui, &store, &state);
             let _ = load_stream(&ui, &store, &state, ui.get_feed_index());
+            schedule_push(&ui, &store, &state);
             ui.set_status("Queued mark-all-read".into());
         });
     }
@@ -810,9 +817,12 @@ fn spawn_sync(
     let store = store.clone();
     let state = state.clone();
     handle.spawn(async move {
-        let result = match SyncEngine::with_auth(store.clone(), &base, &token) {
-            Ok(mut engine) => engine.sync().await,
-            Err(error) => Err(error),
+        let result = {
+            let _guard = REMOTE_LOCK.lock().await;
+            match SyncEngine::with_auth(store.clone(), &base, &token) {
+                Ok(mut engine) => engine.sync().await,
+                Err(error) => Err(error),
+            }
         };
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
@@ -836,6 +846,66 @@ fn spawn_sync(
                         ui.set_status(format!("Sync failed: {error}").into());
                     }
                 }
+            }
+        });
+    });
+}
+
+fn schedule_push(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>>) {
+    let (generation, handle) = {
+        let mut state = state.lock().unwrap();
+        state.push_generation = state.push_generation.wrapping_add(1);
+        (state.push_generation, state.handle.clone())
+    };
+
+    let ui_weak = ui.as_weak();
+    let store = store.clone();
+    let state = state.clone();
+    handle.spawn(async move {
+        tokio::time::sleep(PUSH_DEBOUNCE).await;
+        {
+            let state = state.lock().unwrap();
+            if state.push_generation != generation {
+                return;
+            }
+        }
+        if store.outbox(1).map(|ops| ops.is_empty()).unwrap_or(true) {
+            return;
+        }
+        let Some((base, _)) = store.account().ok().flatten() else {
+            return;
+        };
+        let Some(token) = store.auth_token().ok().flatten() else {
+            return;
+        };
+
+        let pushed = {
+            let _guard = REMOTE_LOCK.lock().await;
+            let Ok(mut engine) = SyncEngine::with_auth(store.clone(), &base, &token) else {
+                return;
+            };
+            match engine.push_pending().await {
+                Ok(pushed) => pushed,
+                Err(error) => {
+                    if error.is_auth_error() {
+                        let _ = store.set_auth_token(None);
+                        let ui_weak = ui_weak.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_status("Session expired while syncing read state.".into());
+                            }
+                        });
+                    }
+                    return;
+                }
+            }
+        };
+        if pushed == 0 {
+            return;
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_last_synced(last_synced_text(&store).into());
             }
         });
     });
@@ -2294,6 +2364,7 @@ fn mark_item_read(
     if starred {
         adjust_starred_read(ui, -1);
     }
+    schedule_push(ui, store, state);
     Ok(())
 }
 
@@ -2406,6 +2477,7 @@ fn restore_starred(
     set_items_starred(store, state, &unstarred, false)?;
     adjust_starred(ui, starred.len() as i32 - unstarred.len() as i32);
     sync_article_rows(ui, state);
+    schedule_push(ui, store, state);
     Ok(())
 }
 
@@ -2479,6 +2551,7 @@ fn set_items_read(
         adjust_unread(ui, &feed_id, delta);
     }
     adjust_starred_read(ui, starred_unread_delta);
+    schedule_push(ui, store, state);
     Ok(())
 }
 
@@ -2531,6 +2604,7 @@ fn mark_selected_starred(
     adjust_starred(ui, delta);
     sync_article_rows(ui, state);
     record_undo(state, UndoAction::Starred(changes));
+    schedule_push(ui, store, state);
     ui.set_status(
         format!(
             "{} {} article(s) (queued) — Ctrl+Z to undo",
@@ -3295,6 +3369,7 @@ mod selection_tests {
             selected: HashSet::from(["old".to_string()]),
             anchor: None,
             handle: runtime.handle().clone(),
+            push_generation: 0,
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
             undo: VecDeque::new(),
@@ -3323,6 +3398,7 @@ mod selection_tests {
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
             handle: runtime.handle().clone(),
+            push_generation: 0,
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
             undo: VecDeque::new(),
@@ -3359,6 +3435,7 @@ mod selection_tests {
             selected: HashSet::new(),
             anchor: None,
             handle: runtime.handle().clone(),
+            push_generation: 0,
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
             undo: VecDeque::new(),
@@ -3387,6 +3464,7 @@ mod selection_tests {
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
             handle: runtime.handle().clone(),
+            push_generation: 0,
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
             undo: VecDeque::new(),
@@ -3447,6 +3525,7 @@ mod undo_tests {
             selected: HashSet::new(),
             anchor: None,
             handle: runtime.handle().clone(),
+            push_generation: 0,
             pending_icons: HashSet::new(),
             pending_media: HashSet::new(),
             undo: VecDeque::new(),
