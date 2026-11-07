@@ -29,6 +29,7 @@ struct UiState {
     streams: Vec<Stream>,
     collapsed_folders: HashSet<String>,
     items: Vec<ItemSummary>,
+    loaded: usize,
     selected: HashSet<String>,
     anchor: Option<String>,
     handle: tokio::runtime::Handle,
@@ -119,6 +120,7 @@ fn main() -> Result<()> {
         streams: Vec::new(),
         collapsed_folders: HashSet::new(),
         items: Vec::new(),
+        loaded: 0,
         selected: HashSet::new(),
         anchor: None,
         handle: runtime.handle().clone(),
@@ -1348,6 +1350,7 @@ fn load_stream(
     {
         let mut state = state.lock().unwrap();
         state.items = items;
+        state.loaded = state.items.len();
         state.selected.clear();
         state.anchor = None;
     }
@@ -1511,7 +1514,7 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
     let (stream, offset) = {
         let state = state.lock().unwrap();
         let index = ui.get_feed_index().max(0) as usize;
-        (state.streams.get(index).cloned(), state.items.len())
+        (state.streams.get(index).cloned(), state.loaded)
     };
     let Some(stream) = stream else {
         return Ok(());
@@ -1532,6 +1535,7 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
     ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
     let mut state = state.lock().unwrap();
     let start = state.items.len();
+    state.loaded += items.len();
     state.items.extend(items);
     let model = ui.get_articles();
     for item in &state.items[start..] {
@@ -1540,25 +1544,46 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
     Ok(())
 }
 
+fn pin_item(items: &mut Vec<ItemSummary>, lead: &ItemSummary) {
+    if items.iter().any(|item| item.id == lead.id) {
+        return;
+    }
+    items.push(lead.clone());
+    items.sort_by(|a, b| {
+        b.timestamp_usec
+            .cmp(&a.timestamp_usec)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+}
+
 fn reload_preserving_selection(
     ui: &MainWindow,
     store: &Arc<Store>,
     state: &Arc<Mutex<UiState>>,
     stream_index: i32,
 ) -> Result<()> {
-    let (selected, anchor, lead) = {
+    let (selected, anchor, lead, reader_open) = {
         let state = state.lock().unwrap();
+        let index = ui.get_article_index();
         let lead = state
             .items
-            .get(ui.get_article_index().max(0) as usize)
-            .filter(|_| ui.get_article_index() >= 0)
-            .map(|item| item.id.clone());
-        (state.selected.clone(), state.anchor.clone(), lead)
+            .get(index.max(0) as usize)
+            .filter(|_| index >= 0)
+            .cloned();
+        (
+            state.selected.clone(),
+            state.anchor.clone(),
+            lead,
+            ui.get_compact_page().as_str() == "reader",
+        )
     };
     clear_reader_cache();
     load_stream(ui, store, state, stream_index)?;
     {
         let mut state = state.lock().unwrap();
+        if let Some(lead) = &lead {
+            pin_item(&mut state.items, lead);
+        }
         let items = &state.items;
         state.selected = selected
             .into_iter()
@@ -1567,17 +1592,20 @@ fn reload_preserving_selection(
         state.anchor = anchor.filter(|id| state.selected.contains(id));
     }
     sync_article_rows(ui, state);
-    if let Some(id) = lead {
+    if let Some(lead) = lead {
         let found = state
             .lock()
             .unwrap()
             .items
             .iter()
-            .position(|item| item.id == id);
+            .position(|item| item.id == lead.id);
         if let Some(found) = found {
             ui.set_article_index(found as i32);
             ui.invoke_reveal_article(found as i32);
             select_article(ui, store, state, found as i32, false, false)?;
+            if reader_open {
+                ui.set_compact_page("reader".into());
+            }
         }
     }
     Ok(())
@@ -2995,6 +3023,7 @@ mod selection_tests {
             streams: Vec::new(),
             collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c")],
+            loaded: 0,
             selected: HashSet::from(["old".to_string()]),
             anchor: None,
             handle: runtime.handle().clone(),
@@ -3022,6 +3051,7 @@ mod selection_tests {
             streams: Vec::new(),
             collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c"), summary("d")],
+            loaded: 0,
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
             handle: runtime.handle().clone(),
@@ -3057,6 +3087,7 @@ mod selection_tests {
             streams: Vec::new(),
             collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
+            loaded: 0,
             selected: HashSet::new(),
             anchor: None,
             handle: runtime.handle().clone(),
@@ -3084,6 +3115,7 @@ mod selection_tests {
             streams: Vec::new(),
             collapsed_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
+            loaded: 0,
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
             handle: runtime.handle().clone(),
@@ -3094,6 +3126,22 @@ mod selection_tests {
 
         assert_eq!(selected_item_or_first(&state, -1).unwrap().id, "b");
         assert_eq!(selected_item_or_first(&state, 1).unwrap().id, "b");
+    }
+
+    #[test]
+    fn pins_the_open_item_in_chronological_order() {
+        let mut items = vec![summary("new"), summary("old")];
+        items[0].timestamp_usec = 30;
+        items[1].timestamp_usec = 10;
+        let mut lead = summary("mid");
+        lead.timestamp_usec = 20;
+
+        pin_item(&mut items, &lead);
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["new", "mid", "old"]);
+
+        pin_item(&mut items, &lead);
+        assert_eq!(items.len(), 3);
     }
 }
 
@@ -3127,6 +3175,7 @@ mod undo_tests {
             streams: Vec::new(),
             collapsed_folders: HashSet::new(),
             items,
+            loaded: 0,
             selected: HashSet::new(),
             anchor: None,
             handle: runtime.handle().clone(),
