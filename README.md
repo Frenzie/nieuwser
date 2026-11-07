@@ -96,9 +96,14 @@ single-database override that disables account switching.
 ## Development
 
 ```sh
-cargo test -p nieuwser-core   # core tests
+make test-core    # core tests, skips the Slint app
+make check-core   # quick type-check of the core crate
 cargo fmt --all --check
 ```
+
+`cargo build -p nieuwser` is the quickest way to build the app; avoid
+`--workspace` while iterating. CI uses `Swatinem/rust-cache`; locally, optional
+`sccache` and `mold`/`lld` can speed up clean builds and linking.
 
 Current status and open work are tracked in [PLAN.md](PLAN.md).
 
