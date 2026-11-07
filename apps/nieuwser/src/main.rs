@@ -1917,8 +1917,13 @@ fn to_reader_block(block: Block, image: Option<slint::Image>) -> ReaderBlock {
                 if block.kind == BlockKind::Code {
                     StyledText::from_plain_text(&chunk)
                 } else {
-                    StyledText::from_markdown(&chunk)
-                        .unwrap_or_else(|_| StyledText::from_plain_text(&chunk))
+                    let markdown = if matches!(block.kind, BlockKind::Heading(_)) {
+                        format!("**{}**", chunk.trim())
+                    } else {
+                        chunk
+                    };
+                    StyledText::from_markdown(&markdown)
+                        .unwrap_or_else(|_| StyledText::from_plain_text(&markdown))
                 }
             })
             .collect()
@@ -2773,6 +2778,21 @@ mod reader_layout_tests {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn headings_render_bold() {
+        let block = to_reader_block(
+            Block {
+                kind: BlockKind::Heading(2),
+                label: String::new(),
+                text: "Section".into(),
+                url: None,
+            },
+            None,
+        );
+        let expected = StyledText::from_markdown("**Section**").unwrap();
+        assert_eq!(block.chunks.row_data(0), Some(expected));
     }
 
     #[test]

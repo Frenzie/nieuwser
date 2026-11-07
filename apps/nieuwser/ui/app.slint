@@ -60,18 +60,19 @@ export global Theme {
 
 component ReaderText inherits StyledText {
     in property <string> kind;
-    default-font-size: kind == "h1" ? 26px
-        : kind == "h2" ? 21px
-        : kind == "h3" ? 18px
-        : kind == "h4" || kind == "h5" || kind == "h6" ? 16px
-        : kind == "code" ? 13px
+    default-font-size: kind == "h1" ? 31px
+        : kind == "h2" ? 24px
+        : kind == "h3" ? 20px
+        : kind == "h4" || kind == "h5" || kind == "h6" ? 18px
+        : kind == "code" ? 14px
         : kind == "table" ? 12px
         : kind == "image" ? 12px
-        : 15px;
+        : 17px;
     default-color: kind == "quote" ? Theme.text-muted
         : kind == "image" ? Theme.text-muted
         : Theme.text;
-    default-font-family: kind == "code" || kind == "table" ? "monospace" : "";
+    default-font-family: kind == "code" || kind == "table" ? "monospace" : "Noto Sans";
+    link-color: Theme.accent;
     horizontal-stretch: 1;
 }
 
@@ -667,6 +668,40 @@ export component MainWindow inherits Window {
 
     public function scroll-reader-to-top() {
         reader-scroll.content-y = 0px;
+    }
+
+    function reader-space-before(kind: string) -> length {
+        if (kind == "h1" || kind == "h2" || kind == "h3"
+            || kind == "h4" || kind == "h5" || kind == "h6") {
+            return 18px;
+        }
+        if (kind == "rule") {
+            return 24px;
+        }
+        if (kind == "image" || kind == "code" || kind == "table") {
+            return 16px;
+        }
+        return 0px;
+    }
+
+    function reader-space-after(kind: string) -> length {
+        if (kind == "title") {
+            return 4px;
+        }
+        if (kind == "meta") {
+            return 18px;
+        }
+        if (kind == "h1" || kind == "h2" || kind == "h3"
+            || kind == "h4" || kind == "h5" || kind == "h6") {
+            return 6px;
+        }
+        if (kind == "li") {
+            return 6px;
+        }
+        if (kind == "rule" || kind == "image" || kind == "code" || kind == "table") {
+            return 20px;
+        }
+        return 14px;
     }
 
     function nav-press(up: bool, delta: length) {
@@ -1301,26 +1336,30 @@ export component MainWindow inherits Window {
                             content-width: self.width;
 
                             reader-content := VerticalLayout {
-                                width: reader-scroll.width;
+                                width: Math.min(reader-scroll.width, 640px);
+                                x: (reader-scroll.width - self.width) / 2;
 
                             for block in root.reader-blocks : VerticalLayout {
-                                spacing: 4px;
-                                padding-bottom: 8px;
+                                spacing: 0;
+                                padding-top: root.reader-space-before(block.kind);
+                                padding-bottom: root.reader-space-after(block.kind);
 
                                 if block.kind == "title" : Text {
                                     text: block.label;
-                                    font-size: 24px;
+                                    font-size: 30px;
                                     font-weight: 700;
+                                    letter-spacing: -0.3px;
                                     wrap: word-wrap;
-                                    width: reader-scroll.width;
+                                    width: reader-content.width;
                                 }
 
                                 if block.kind == "meta" : Text {
                                     text: block.label;
                                     color: Theme.text-muted;
-                                    font-size: 12px;
+                                    font-size: 13px;
+                                    letter-spacing: 0.2px;
                                     wrap: word-wrap;
-                                    width: reader-scroll.width;
+                                    width: reader-content.width;
                                 }
 
                                 if block.kind == "empty" : Text {
@@ -1328,7 +1367,7 @@ export component MainWindow inherits Window {
                                     color: Theme.text-faint;
                                     font-size: 13px;
                                     wrap: word-wrap;
-                                    width: reader-scroll.width;
+                                    width: reader-content.width;
                                 }
 
                                 if block.kind == "rule" : Rectangle {
@@ -1351,13 +1390,14 @@ export component MainWindow inherits Window {
 
                                         Text {
                                             text: block.label;
-                                            font-weight: 600;
+                                            font-size: 12px;
+                                            color: Theme.text-muted;
                                             wrap: word-wrap;
                                         }
                                         if !block.has-image : ReaderText {
                                             text: block.text;
                                             kind: block.kind;
-                                            width: reader-scroll.width - 40px;
+                                            width: reader-content.width - 40px;
                                             link-clicked(link) => {
                                                 root.open-link(link);
                                             }
@@ -1369,7 +1409,7 @@ export component MainWindow inherits Window {
                                     background: Theme.block;
                                     border-radius: 6px;
                                     VerticalLayout {
-                                        padding: 10px;
+                                        padding: 12px;
                                         spacing: 4px;
                                         if block.label != "" : Text {
                                             text: block.label;
@@ -1383,7 +1423,7 @@ export component MainWindow inherits Window {
                                             for chunk in block.chunks : ReaderText {
                                                 text: chunk;
                                                 kind: block.kind;
-                                                width: reader-scroll.width - 40px;
+                                                width: reader-content.width - 48px;
                                             }
                                         }
                                     }
@@ -1393,7 +1433,8 @@ export component MainWindow inherits Window {
                                     && block.kind != "table" && block.kind != "title"
                                     && block.kind != "meta" && block.kind != "empty" : HorizontalLayout {
                                     padding-left: block.indent * 18px;
-                                    spacing: 8px;
+                                    padding-right: block.kind == "quote" ? 8px : 0px;
+                                    spacing: block.kind == "quote" ? 12px : 8px;
 
                                     if block.kind == "quote" : Rectangle {
                                         width: 3px;
@@ -1404,7 +1445,7 @@ export component MainWindow inherits Window {
                                         text: block.label;
                                         width: 30px;
                                         color: Theme.text-muted;
-                                        font-size: 14px;
+                                        font-size: 15px;
                                         vertical-alignment: top;
                                     }
 
@@ -1415,8 +1456,8 @@ export component MainWindow inherits Window {
                                             text: chunk;
                                             kind: block.kind;
                                             // Slint 1.18 measures wrapped text at its unconstrained width.
-                                            width: reader-scroll.width - 20px - block.indent * 18px
-                                                - (block.kind == "quote" ? 11px : 0px)
+                                            width: reader-content.width - 20px - block.indent * 18px
+                                                - (block.kind == "quote" ? 23px : 0px)
                                                 - (block.label != "" ? 38px : 0px);
                                             link-clicked(link) => {
                                                 root.open-link(link);
