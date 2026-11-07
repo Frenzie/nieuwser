@@ -101,7 +101,7 @@ thread_local! {
 }
 
 fn main() -> Result<()> {
-    configure_emoji_font()?;
+    configure_fonts()?;
     let db_path = db_path()?;
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -2664,10 +2664,12 @@ fn relative_time(secs: i64) -> String {
     }
 }
 
-fn configure_emoji_font() -> Result<()> {
-    use slint::fontique_011::fontique::{Blob, GenericFamily};
+const READER_FONT_FAMILY: &str = "Nieuwser Reader";
+const READER_LINE_HEIGHT: f32 = 1.625;
+const NOTO_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-VariableFont_wght.ttf");
 
-    const NOTO_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-VariableFont_wght.ttf");
+fn configure_fonts() -> Result<()> {
+    use slint::fontique_011::fontique::{Blob, GenericFamily};
 
     let mut fonts = slint::fontique_011::shared_collection();
     let family = fonts
@@ -2676,7 +2678,179 @@ fn configure_emoji_font() -> Result<()> {
         .map(|(family, _)| *family)
         .ok_or_else(|| anyhow::anyhow!("bundled Noto Emoji font is invalid"))?;
     fonts.set_generic_families(GenericFamily::Emoji, std::iter::once(family));
+    register_reader_font(&mut fonts);
     Ok(())
+}
+
+/// Registers a copy of the system sans font under our own family, with its line
+/// metrics rewritten so that StyledText (which has no line-height property)
+/// still lays out with a fixed reading line height.
+fn register_reader_font(fonts: &mut slint::fontique_011::fontique::Collection) {
+    use slint::fontique_011::fontique::{
+        Attributes, Blob, FontInfoOverride, FontStyle, FontWeight, GenericFamily, QueryFamily,
+        QueryStatus, SourceCache,
+    };
+
+    let mut source_cache = SourceCache::default();
+    for (weight, style) in [
+        (FontWeight::NORMAL, FontStyle::Normal),
+        (FontWeight::BOLD, FontStyle::Normal),
+        (FontWeight::NORMAL, FontStyle::Italic),
+    ] {
+        let mut query = fonts.query(&mut source_cache);
+        query.set_families([
+            QueryFamily::Named("Noto Sans"),
+            QueryFamily::Generic(GenericFamily::SansSerif),
+        ]);
+        query.set_attributes(Attributes {
+            weight,
+            style,
+            ..Default::default()
+        });
+        let mut found = None;
+        query.matches_with(|font| {
+            found = Some(font.blob.data().to_vec());
+            QueryStatus::Stop
+        });
+        drop(query);
+
+        let Some(mut data) = found else { continue };
+        if !retune_line_metrics(&mut data, READER_LINE_HEIGHT) {
+            continue;
+        }
+        fonts.register_fonts(
+            Blob::new(Arc::new(data)),
+            Some(FontInfoOverride {
+                family_name: Some(READER_FONT_FAMILY),
+                ..Default::default()
+            }),
+        );
+    }
+}
+
+fn retune_line_metrics(data: &mut [u8], target: f32) -> bool {
+    let mut tuned = false;
+    for directory in sfnt_directories(data) {
+        let Some(tables) = sfnt_tables(data, directory) else {
+            continue;
+        };
+        let Some(head) = tables.head else { continue };
+        let Some(hhea) = tables.hhea else { continue };
+        let Some(upm) = head
+            .checked_add(18)
+            .and_then(|offset| read_u16(data, offset))
+            .filter(|&upm| upm > 0)
+        else {
+            continue;
+        };
+        let target_units = (target * f32::from(upm)).round() as i32;
+
+        if let (Some(ascender), Some(descender)) = (
+            hhea.checked_add(4)
+                .and_then(|offset| read_i16(data, offset)),
+            hhea.checked_add(6)
+                .and_then(|offset| read_i16(data, offset)),
+        ) {
+            let gap = target_units - (i32::from(ascender) - i32::from(descender));
+            if let Some(offset) = hhea.checked_add(8) {
+                tuned |= write_i16(data, offset, gap);
+            }
+        }
+
+        if let Some(os2) = tables.os2 {
+            if let (Some(ascender), Some(descender)) = (
+                os2.checked_add(68)
+                    .and_then(|offset| read_i16(data, offset)),
+                os2.checked_add(70)
+                    .and_then(|offset| read_i16(data, offset)),
+            ) {
+                let gap = target_units - (i32::from(ascender) - i32::from(descender));
+                if let Some(offset) = os2.checked_add(72) {
+                    tuned |= write_i16(data, offset, gap);
+                }
+            }
+        }
+    }
+    tuned
+}
+
+struct SfntTables {
+    head: Option<usize>,
+    hhea: Option<usize>,
+    os2: Option<usize>,
+}
+
+fn sfnt_directories(data: &[u8]) -> Vec<usize> {
+    if data.get(..4) == Some(b"ttcf") {
+        let count = read_u32(data, 8).unwrap_or(0).min(64) as usize;
+        (0..count)
+            .filter_map(|index| 12usize.checked_add(index.checked_mul(4)?))
+            .filter_map(|offset| read_u32(data, offset))
+            .map(|offset| offset as usize)
+            .filter(|&offset| offset.checked_add(12).is_some_and(|end| end <= data.len()))
+            .collect()
+    } else if data.len() >= 12 {
+        vec![0]
+    } else {
+        Vec::new()
+    }
+}
+
+fn sfnt_tables(data: &[u8], directory: usize) -> Option<SfntTables> {
+    let count = directory
+        .checked_add(4)
+        .and_then(|offset| read_u16(data, offset))? as usize;
+    let mut tables = SfntTables {
+        head: None,
+        hhea: None,
+        os2: None,
+    };
+    for index in 0..count {
+        let record = directory
+            .checked_add(12)?
+            .checked_add(index.checked_mul(16)?)?;
+        let tag = data.get(record..record.checked_add(4)?)?;
+        let offset = record
+            .checked_add(8)
+            .and_then(|offset| read_u32(data, offset))? as usize;
+        match tag {
+            b"head" => tables.head = Some(offset),
+            b"hhea" => tables.hhea = Some(offset),
+            b"OS/2" => tables.os2 = Some(offset),
+            _ => {}
+        }
+    }
+    Some(tables)
+}
+
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(
+        data.get(offset..offset.checked_add(2)?)?.try_into().ok()?,
+    ))
+}
+
+fn read_i16(data: &[u8], offset: usize) -> Option<i16> {
+    read_u16(data, offset).map(|value| value as i16)
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        data.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
+    ))
+}
+
+fn write_i16(data: &mut [u8], offset: usize, value: i32) -> bool {
+    let Ok(value) = i16::try_from(value) else {
+        return false;
+    };
+    let Some(end) = offset.checked_add(2) else {
+        return false;
+    };
+    let Some(slot) = data.get_mut(offset..end) else {
+        return false;
+    };
+    slot.copy_from_slice(&value.to_be_bytes());
+    true
 }
 
 fn db_path() -> Result<PathBuf> {
@@ -2778,6 +2952,21 @@ mod reader_layout_tests {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
             Ok(self.0.clone())
         }
+    }
+
+    #[test]
+    fn retunes_font_line_metrics() {
+        let mut data = NOTO_EMOJI.to_vec();
+        assert!(retune_line_metrics(&mut data, READER_LINE_HEIGHT));
+        let directory = sfnt_directories(&data)[0];
+        let tables = sfnt_tables(&data, directory).unwrap();
+        let upm = read_u16(&data, tables.head.unwrap() + 18).unwrap();
+        let hhea = tables.hhea.unwrap();
+        let ascender = read_i16(&data, hhea + 4).unwrap();
+        let descender = read_i16(&data, hhea + 6).unwrap();
+        let gap = read_i16(&data, hhea + 8).unwrap();
+        let ratio = (f32::from(ascender) - f32::from(descender) + f32::from(gap)) / f32::from(upm);
+        assert!((ratio - READER_LINE_HEIGHT).abs() < 0.002);
     }
 
     #[test]

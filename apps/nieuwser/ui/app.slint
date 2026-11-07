@@ -71,7 +71,7 @@ component ReaderText inherits StyledText {
     default-color: kind == "quote" ? Theme.text-muted
         : kind == "image" ? Theme.text-muted
         : Theme.text;
-    default-font-family: kind == "code" || kind == "table" ? "monospace" : "Noto Sans";
+    default-font-family: kind == "code" || kind == "table" ? "monospace" : "Nieuwser Reader";
     link-color: Theme.accent;
     horizontal-stretch: 1;
 }
@@ -1346,24 +1346,29 @@ export component MainWindow inherits Window {
 
                                 if block.kind == "title" : Text {
                                     text: block.label;
+                                    font-family: "Nieuwser Reader";
                                     font-size: 30px;
                                     font-weight: 700;
                                     letter-spacing: -0.3px;
+                                    line-height-factor: 0.75;
                                     wrap: word-wrap;
                                     width: reader-content.width;
                                 }
 
                                 if block.kind == "meta" : Text {
                                     text: block.label;
+                                    font-family: "Nieuwser Reader";
                                     color: Theme.text-muted;
                                     font-size: 13px;
                                     letter-spacing: 0.2px;
+                                    line-height-factor: 0.9;
                                     wrap: word-wrap;
                                     width: reader-content.width;
                                 }
 
                                 if block.kind == "empty" : Text {
                                     text: block.label;
+                                    font-family: "Nieuwser Reader";
                                     color: Theme.text-faint;
                                     font-size: 13px;
                                     wrap: word-wrap;
