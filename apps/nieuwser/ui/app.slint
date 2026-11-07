@@ -1004,31 +1004,13 @@ export component MainWindow inherits Window {
                     spacing: 6px;
 
                     HorizontalLayout {
-                        spacing: 8px;
+                        spacing: 6px;
                         if root.compact : ToolbarIconButton {
                             icon: @image-url("icons/menu.svg");
                             label: "Feeds";
                             enabled: !root.settings-open;
                             clicked => { root.feed-drawer-open = true; }
                         }
-                        Text {
-                            text: "Articles";
-                            font-weight: 600;
-                            color: Theme.text-muted;
-                            horizontal-stretch: 1;
-                            vertical-alignment: center;
-                        }
-                        Button {
-                            text: "Mark all read";
-                            enabled: !root.settings-open;
-                            clicked => {
-                                root.open-mark-all-confirm();
-                            }
-                        }
-                    }
-
-                    HorizontalLayout {
-                        spacing: 6px;
                         LineEdit {
                             placeholder-text: "Search articles…";
                             enabled: !root.settings-open;
