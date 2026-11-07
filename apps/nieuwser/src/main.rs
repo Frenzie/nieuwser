@@ -27,7 +27,7 @@ struct ReaderView {
 
 struct UiState {
     streams: Vec<Stream>,
-    collapsed_folders: HashSet<String>,
+    expanded_folders: HashSet<String>,
     items: Vec<ItemSummary>,
     loaded: usize,
     selected: HashSet<String>,
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
     ui.set_list_width(saved_length(&store, "list_width", 400.0).max(240.0));
     let state = Arc::new(Mutex::new(UiState {
         streams: Vec::new(),
-        collapsed_folders: HashSet::new(),
+        expanded_folders: HashSet::new(),
         items: Vec::new(),
         loaded: 0,
         selected: HashSet::new(),
@@ -552,6 +552,9 @@ fn bind_callbacks(
                 ui.set_article_content_y(0.0);
                 ui.set_compact_page("list".into());
                 ui.set_feed_drawer_open(false);
+                if let Some(folder_id) = folder_at(&state, index) {
+                    set_folder_expanded(&ui, &state, &folder_id, true);
+                }
                 if let Err(error) = load_stream(&ui, &store, &state, index) {
                     ui.set_status(format!("Load failed: {error}").into());
                 }
@@ -566,38 +569,14 @@ fn bind_callbacks(
             let Some(ui) = ui_weak.upgrade() else {
                 return;
             };
-            let folder_id = {
+            let Some(folder_id) = folder_at(&state, index) else {
+                return;
+            };
+            let expand = {
                 let state = state.lock().unwrap();
-                match state.streams.get(index.max(0) as usize) {
-                    Some(Stream::Folder(id)) => id.clone(),
-                    _ => return,
-                }
+                !state.expanded_folders.contains(&folder_id)
             };
-            let collapsing = {
-                let mut state = state.lock().unwrap();
-                if state.collapsed_folders.contains(&folder_id) {
-                    state.collapsed_folders.remove(&folder_id);
-                    false
-                } else {
-                    state.collapsed_folders.insert(folder_id.clone());
-                    true
-                }
-            };
-            let model = ui.get_feeds();
-            for row_index in 0..model.row_count() {
-                let Some(mut row) = model.row_data(row_index) else {
-                    continue;
-                };
-                if row.folder_id.as_str() != folder_id {
-                    continue;
-                }
-                match row.kind.as_str() {
-                    "folder" => row.collapsed = collapsing,
-                    "feed" => row.shown = !collapsing,
-                    _ => continue,
-                }
-                model.set_row_data(row_index, row);
-            }
+            set_folder_expanded(&ui, &state, &folder_id, expand);
         });
     }
 
@@ -1032,7 +1011,7 @@ struct SidebarRow {
 fn build_sidebar(
     feeds: Vec<nieuwser_core::store::FeedRow>,
     counts: &HashMap<String, i64>,
-    collapsed: &HashSet<String>,
+    expanded: &HashSet<String>,
     total: i64,
     starred: i64,
 ) -> (Vec<SidebarRow>, Vec<Stream>) {
@@ -1077,7 +1056,7 @@ fn build_sidebar(
         let shown = feed
             .folder_id
             .as_deref()
-            .is_none_or(|folder_id| !collapsed.contains(folder_id));
+            .is_none_or(|folder_id| expanded.contains(folder_id));
         let row = SidebarRow {
             id: feed.id.clone(),
             title: feed.title,
@@ -1110,7 +1089,7 @@ fn build_sidebar(
 
     for (folder_id, name, feeds) in groups {
         let count = feeds.iter().map(|feed| feed.count).sum();
-        let is_collapsed = collapsed.contains(&folder_id);
+        let is_collapsed = !expanded.contains(&folder_id);
         rows.push(SidebarRow {
             id: folder_id.clone(),
             title: name,
@@ -1135,6 +1114,46 @@ fn build_sidebar(
     }
 
     (rows, streams)
+}
+
+fn folder_at(state: &Arc<Mutex<UiState>>, index: i32) -> Option<String> {
+    let state = state.lock().unwrap();
+    match state.streams.get(index.max(0) as usize) {
+        Some(Stream::Folder(id)) => Some(id.clone()),
+        _ => None,
+    }
+}
+
+fn set_folder_expanded(
+    ui: &MainWindow,
+    state: &Arc<Mutex<UiState>>,
+    folder_id: &str,
+    expanded: bool,
+) {
+    {
+        let mut state = state.lock().unwrap();
+        if expanded {
+            state.expanded_folders.insert(folder_id.to_string());
+        } else {
+            state.expanded_folders.remove(folder_id);
+        }
+    }
+
+    let model = ui.get_feeds();
+    for row_index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(row_index) else {
+            continue;
+        };
+        if row.folder_id.as_str() != folder_id {
+            continue;
+        }
+        match row.kind.as_str() {
+            "folder" => row.collapsed = !expanded,
+            "feed" => row.shown = expanded,
+            _ => continue,
+        }
+        model.set_row_data(row_index, row);
+    }
 }
 
 fn sidebar_title_budget(feed_width: f32) -> usize {
@@ -1184,8 +1203,8 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
     let counts = store.feed_counts(read, search)?;
     let total = store.count_items(&Stream::All, read, search)?;
     let starred = store.count_items(&Stream::Starred, read, search)?;
-    let collapsed = state.lock().unwrap().collapsed_folders.clone();
-    let (sidebar, streams) = build_sidebar(feeds, &counts, &collapsed, total, starred);
+    let expanded = state.lock().unwrap().expanded_folders.clone();
+    let (sidebar, streams) = build_sidebar(feeds, &counts, &expanded, total, starred);
     let title_budget = sidebar_title_budget(ui.get_feed_width());
 
     let mut rows = Vec::with_capacity(sidebar.len());
@@ -3270,7 +3289,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
-            collapsed_folders: HashSet::new(),
+            expanded_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c")],
             loaded: 0,
             selected: HashSet::from(["old".to_string()]),
@@ -3298,7 +3317,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
-            collapsed_folders: HashSet::new(),
+            expanded_folders: HashSet::new(),
             items: vec![summary("a"), summary("b"), summary("c"), summary("d")],
             loaded: 0,
             selected: HashSet::from(["b".to_string()]),
@@ -3334,7 +3353,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
-            collapsed_folders: HashSet::new(),
+            expanded_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
             loaded: 0,
             selected: HashSet::new(),
@@ -3362,7 +3381,7 @@ mod selection_tests {
             .unwrap();
         let state = Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
-            collapsed_folders: HashSet::new(),
+            expanded_folders: HashSet::new(),
             items: vec![summary("a"), summary("b")],
             loaded: 0,
             selected: HashSet::from(["b".to_string()]),
@@ -3422,7 +3441,7 @@ mod undo_tests {
             .unwrap();
         Arc::new(Mutex::new(UiState {
             streams: Vec::new(),
-            collapsed_folders: HashSet::new(),
+            expanded_folders: HashSet::new(),
             items,
             loaded: 0,
             selected: HashSet::new(),
@@ -3572,22 +3591,23 @@ mod sidebar_tests {
         assert_eq!(rows[2].kind, "folder");
         assert_eq!(rows[2].count, 2);
         assert_eq!(rows[2].indent, 0);
-        assert!(!rows[2].collapsed);
+        assert!(rows[2].collapsed);
         assert_eq!(rows[3].kind, "feed");
         assert_eq!(rows[3].indent, 1);
+        assert!(!rows[3].shown);
         assert_eq!(rows[4].indent, 0);
     }
 
     #[test]
-    fn collapsed_folders_keep_their_count_and_collapse_children() {
+    fn expanded_folders_reveal_children() {
         let feeds = vec![
             feed("feed/1", "One", Some("user/-/label/News"), Some("News")),
             feed("feed/3", "Three", None, None),
         ];
         let counts = HashMap::from([("feed/1".to_string(), 2), ("feed/3".to_string(), 1)]);
-        let collapsed = HashSet::from(["user/-/label/News".to_string()]);
+        let expanded = HashSet::from(["user/-/label/News".to_string()]);
 
-        let (rows, streams) = build_sidebar(feeds, &counts, &collapsed, 3, 0);
+        let (rows, streams) = build_sidebar(feeds, &counts, &expanded, 3, 0);
 
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(
@@ -3605,8 +3625,8 @@ mod sidebar_tests {
             ]
         );
         assert_eq!(rows[2].count, 2);
-        assert!(rows[2].collapsed);
-        assert!(!rows[3].shown);
+        assert!(!rows[2].collapsed);
+        assert!(rows[3].shown);
         assert!(rows[4].shown);
     }
 
