@@ -346,6 +346,15 @@ Working today:
 - Linux packaging validated locally: AppImage, `.deb`, and `.tar.gz` build; the AppImage bundles
   xkbcommon and supports desktop integration; repeated `.tar.gz`/`.deb` builds are byte-identical.
 
+Known issues:
+
+- Reader bottom clipping: Slint 1.18.1 measures repeated layout cells containing word-wrapped
+  text at the cell's preferred width, so the Flickable can under-report its content height and
+  the last line of an article is occasionally unreachable by scrolling. Upstream Slint #13655,
+  fixed by #13683 on master but not yet in a release. Explicit widths on `ReaderText` and the
+  multi-pass `scroll_to_end` test mitigate it. Revisit when Slint 1.19 lands; an interim bottom
+  spacer is the low-risk workaround.
+
 Recent changes (2026-10-24):
 
 - Added session-scoped Ctrl+Z undo for explicit read/star actions and a confirmation dialog for
