@@ -9,10 +9,10 @@ Status: M0–M4 complete; M5 substantially complete (2026-10-21).
 
 - **UI:** Slint. The UI must stay replaceable, so all business logic lives in `nieuwser-core`.
 - **Article view:** block-level document IR (headings, paragraphs, lists, quotes, code, rules,
-  tables, images) rendered with native Slint widgets; inline links open externally. The reader is
-  a virtualized Slint `ListView`, with the title/meta as model rows so off-screen blocks are not
-  laid out. A skeleton covers loading, and Noto Emoji is bundled for consistent/fast emoji
-  fallback. No embedded webview or Blitz.
+  tables, images) rendered with native Slint widgets; inline links open externally. The reader
+  renders the block model in an all-at-once `VerticalLayout` inside a `Flickable`, with title/meta
+  as leading blocks, so images and touch drags work reliably. A skeleton covers loading, and Noto
+  Emoji is bundled for consistent/fast emoji fallback. No embedded webview or Blitz.
 - **Search:** SQLite FTS5 over title, author, summary, and content, using prefix terms with a
   feed-title fallback. Existing rows are backfilled once on migration.
 - **Network safety:** HTTP response bodies are bounded. Remote images reject private, loopback,
@@ -113,10 +113,11 @@ position are stored in SQLite and restored on launch; Wayland position saves are
 because that compositor does not expose them.
 
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links. The reader
-is a virtualized `ListView`; title/meta rows are part of the model, and a skeleton covers the
-loading gap. Noto Emoji is bundled and registered as Slint's emoji fallback. Article images and
-feed icons are fetched on demand, cached in SQLite, rendered natively, and loaded with bounded
-concurrency; inline images are promoted out of paragraphs.
+renders the block model in an all-at-once `VerticalLayout` inside a `Flickable`; title/meta are
+leading blocks, and a skeleton covers the loading gap. Noto Emoji is bundled and registered as
+Slint's emoji fallback. Article images and feed icons are fetched on demand, cached in SQLite,
+rendered natively, and loaded with bounded concurrency; inline images are promoted out of
+paragraphs.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
@@ -320,10 +321,10 @@ Working today:
   settings/onboarding dialog, stored auth token, background sync
   (startup plus every 15 minutes), last-sync display, optional mark-read-on-open, keyboard
   navigation, local search, all/unread/read article filters, feed selection, paginated article
-  list, virtualized rich reader, loading skeleton, bundled emoji fallback, cached feed icons and
-  article images, persisted light/dark theme, restored window geometry, editable shortcuts and
-  shortcut help, read/star/mark-all actions, manual refresh that preserves the open article, and
-  browser opening from the reader toolbar, keyboard, double-click, and middle-click.
+  list, Flickable-backed rich reader, loading skeleton, bundled emoji fallback, cached feed
+  icons and article images, persisted light/dark theme, restored window geometry, editable
+  shortcuts and shortcut help, read/star/mark-all actions, manual refresh that preserves the open
+  article, and browser opening from the reader toolbar, keyboard, double-click, and middle-click.
 - Tests: 39 core tests plus 16 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
@@ -390,7 +391,8 @@ Recent changes (2026-10-23):
 
 Recent changes (2026-10-22):
 
-- Replaced the all-at-once reader with a virtualized `ListView`, added a loading skeleton, and
+- Replaced the all-at-once reader with a virtualized `ListView` (later replaced again by the
+  Flickable-backed block layout so touch drags on images work), added a loading skeleton, and
   registered bundled Noto Emoji as the fallback font.
 - Added FTS5 search with one-time indexing of existing articles.
 - Bounded HTTP bodies and hardened remote image fetching against SSRF, redirects, oversized
