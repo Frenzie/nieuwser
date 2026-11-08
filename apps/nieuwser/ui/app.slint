@@ -401,6 +401,7 @@ component FeedSidebar inherits Rectangle {
     callback toggle-folder(int);
     callback context-feed(int, length, length);
     callback context-empty(length, length);
+    callback dismiss-search();
 
     background: Theme.surface-alt;
 
@@ -409,6 +410,9 @@ component FeedSidebar inherits Rectangle {
         height: parent.height;
         enabled: root.interactive;
         pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.dismiss-search();
+            }
             if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
                 root.context-empty(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
@@ -668,6 +672,12 @@ export component MainWindow inherits Window {
 
     public function scroll-reader-to-top() {
         reader-scroll.content-y = 0px;
+    }
+
+    function dismiss-search() {
+        if (search-input.has-focus) {
+            main-focus.focus();
+        }
     }
 
     function reader-space-before(kind: string) -> length {
@@ -977,20 +987,29 @@ export component MainWindow inherits Window {
                 selected-index: root.feed-index;
                 interactive: !root.settings-open;
                 select-feed(index) => {
+                    root.dismiss-search();
                     root.feed-index = index;
                     root.select-feed(index);
                     root.compact-page = "list";
                     root.feed-drawer-open = false;
                 }
                 toggle-folder(index) => {
+                    root.dismiss-search();
                     root.toggle-folder(index);
                 }
                 context-feed(index, x, y) => {
+                    root.dismiss-search();
                     root.feed-index = index;
                     root.select-feed(index);
                     root.open-menu(1, x, y);
                 }
-                context-empty(x, y) => { root.open-menu(1, x, y); }
+                context-empty(x, y) => {
+                    root.dismiss-search();
+                    root.open-menu(1, x, y);
+                }
+                dismiss-search => {
+                    root.dismiss-search();
+                }
             }
 
             Splitter {
@@ -999,6 +1018,7 @@ export component MainWindow inherits Window {
                 width: 7px;
                 height: parent.height;
                 start(x) => {
+                    root.dismiss-search();
                     root.drag-start-x = x;
                     root.drag-start-width = root.feed-width;
                 }
@@ -1028,6 +1048,9 @@ export component MainWindow inherits Window {
                     height: parent.height;
                     enabled: !root.settings-open;
                     pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            root.dismiss-search();
+                        }
                         if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
                             root.open-menu(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                         }
@@ -1046,11 +1069,19 @@ export component MainWindow inherits Window {
                             enabled: !root.settings-open;
                             clicked => { root.feed-drawer-open = true; }
                         }
-                        LineEdit {
+                        search-input := LineEdit {
                             placeholder-text: "Search articles…";
                             enabled: !root.settings-open;
                             horizontal-stretch: 1;
                             text <=> root.search-query;
+                            key-pressed(event) => {
+                                if (event.text == Key.Escape) {
+                                    main-focus.focus();
+                                    accept
+                                } else {
+                                    reject
+                                }
+                            }
                             edited => {
                                 root.search(root.search-query);
                             }
@@ -1139,6 +1170,9 @@ export component MainWindow inherits Window {
                                     root.open-selection();
                                 }
                                 pointer-event(event) => {
+                                    if (event.kind == PointerEventKind.down) {
+                                        root.dismiss-search();
+                                    }
                                     if (event.button == PointerEventButton.right && event.kind == PointerEventKind.down) {
                                         root.context-article(i);
                                         root.open-menu(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
@@ -1169,6 +1203,7 @@ export component MainWindow inherits Window {
                 width: 7px;
                 height: parent.height;
                 start(x) => {
+                    root.dismiss-search();
                     root.drag-start-x = x;
                     root.drag-start-width = root.list-width;
                 }
@@ -1193,6 +1228,17 @@ export component MainWindow inherits Window {
                 height: parent.height;
                 clip: true;
                 background: Theme.surface;
+
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    enabled: !root.settings-open;
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            root.dismiss-search();
+                        }
+                    }
+                }
 
                 reader-context := SelectionContext {
                     has-selection: root.article-index >= 0;
@@ -1404,6 +1450,7 @@ export component MainWindow inherits Window {
                                             kind: block.kind;
                                             width: reader-content.width - 40px;
                                             link-clicked(link) => {
+                                                root.dismiss-search();
                                                 root.open-link(link);
                                             }
                                         }
@@ -1465,6 +1512,7 @@ export component MainWindow inherits Window {
                                                 - (block.kind == "quote" ? 23px : 0px)
                                                 - (block.label != "" ? 38px : 0px);
                                             link-clicked(link) => {
+                                                root.dismiss-search();
                                                 root.open-link(link);
                                             }
                                         }
@@ -1509,6 +1557,7 @@ export component MainWindow inherits Window {
                         pointer-event(event) => {
                             if (event.button == PointerEventButton.left) {
                                 if (event.kind == PointerEventKind.down) {
+                                    root.dismiss-search();
                                     root.reader-scrollbar-dragging = true;
                                     root.reader-scrollbar-drag-start-y = self.mouse-y;
                                     root.reader-scrollbar-drag-start-content-y = reader-scroll.content-y;
@@ -1575,20 +1624,29 @@ export component MainWindow inherits Window {
             selected-index: root.feed-index;
             interactive: !root.settings-open;
             select-feed(index) => {
+                root.dismiss-search();
                 root.feed-index = index;
                 root.select-feed(index);
                 root.compact-page = "list";
                 root.feed-drawer-open = false;
             }
             toggle-folder(index) => {
+                root.dismiss-search();
                 root.toggle-folder(index);
             }
             context-feed(index, x, y) => {
+                root.dismiss-search();
                 root.feed-index = index;
                 root.select-feed(index);
                 root.open-menu(1, x, y);
             }
-            context-empty(x, y) => { root.open-menu(1, x, y); }
+            context-empty(x, y) => {
+                root.dismiss-search();
+                root.open-menu(1, x, y);
+            }
+            dismiss-search => {
+                root.dismiss-search();
+            }
         }
     }
 

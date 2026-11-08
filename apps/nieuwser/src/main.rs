@@ -2889,17 +2889,17 @@ fn retune_line_metrics(data: &mut [u8], target: f32) -> bool {
             }
         }
 
-        if let Some(os2) = tables.os2 {
-            if let (Some(ascender), Some(descender)) = (
+        if let Some(os2) = tables.os2
+            && let (Some(ascender), Some(descender)) = (
                 os2.checked_add(68)
                     .and_then(|offset| read_i16(data, offset)),
                 os2.checked_add(70)
                     .and_then(|offset| read_i16(data, offset)),
-            ) {
-                let gap = target_units - (i32::from(ascender) - i32::from(descender));
-                if let Some(offset) = os2.checked_add(72) {
-                    tuned |= write_i16(data, offset, gap);
-                }
+            )
+        {
+            let gap = target_units - (i32::from(ascender) - i32::from(descender));
+            if let Some(offset) = os2.checked_add(72) {
+                tuned |= write_i16(data, offset, gap);
             }
         }
     }
