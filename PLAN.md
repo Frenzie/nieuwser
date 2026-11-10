@@ -323,12 +323,13 @@ Working today:
   navigation, local search, all/unread/read article filters, feed selection, paginated article
   list, Flickable-backed rich reader, loading skeleton, bundled emoji fallback, cached feed
   icons and article images, persisted light/dark theme, restored window geometry, editable
-  shortcuts and shortcut help, read/star/mark-all actions, manual refresh that preserves the open
-  article, and browser opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 39 core tests plus 16 app tests, covering API parsing/auth, reader blocks,
+  shortcuts and shortcut help, read/star/mark-all actions, refresh that preserves the open
+  article's reader position and keeps read items visible until the view changes, and browser
+  opening from the reader toolbar, keyboard, double-click, and middle-click.
+- Tests: 44 core tests plus 25 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
-  reveal, and long-reader rendering.
+  reveal, refresh retention, and long-reader rendering.
 - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
   pass. GitHub CI runs the test matrix, formatting, and clippy.
 - Validated against a local FreshRSS dev server: 9 feeds, 157 items, 34 unread; repeat sync
@@ -355,6 +356,13 @@ Known issues:
   fixed by #13683 on master but not yet in a release. Explicit widths on `ReaderText` and the
   multi-pass `scroll_to_end` test mitigate it. Revisit when Slint 1.19 lands; an interim bottom
   spacer is the low-risk workaround.
+
+Recent changes (2026-11-10):
+
+- Refreshes now update the article list in place instead of rebuilding it: the open article's
+  reader position is preserved, items read during the session stay visible in filtered lists
+  until the view changes, and the selected feed/folder remains in the sidebar when its matching
+  count reaches zero.
 
 Recent changes (2026-10-24):
 

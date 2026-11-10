@@ -587,6 +587,7 @@ export component MainWindow inherits Window {
     in-out property <bool> mark-read-on-open-browser: true;
     in-out property <string> article-filter: "all";
     in-out property <length> article-content-y: 0px;
+    in-out property <length> reader-content-y: 0px;
     in-out property <string> search-query;
 
     in-out property <bool> settings-open;
@@ -1378,6 +1379,7 @@ export component MainWindow inherits Window {
 
                         reader-scroll := Flickable {
                             interactive: !root.compact;
+                            content-y <=> root.reader-content-y;
                             content-height: reader-content.preferred-height;
                             content-width: self.width;
 

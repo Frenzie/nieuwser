@@ -25,6 +25,13 @@ struct ReaderView {
     blocks: ModelRc<ReaderBlock>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct ViewKey {
+    stream: Stream,
+    read: Option<bool>,
+    query: String,
+}
+
 struct UiState {
     streams: Vec<Stream>,
     expanded_folders: HashSet<String>,
@@ -32,6 +39,7 @@ struct UiState {
     loaded: usize,
     selected: HashSet<String>,
     anchor: Option<String>,
+    view: Option<ViewKey>,
     handle: tokio::runtime::Handle,
     push_generation: u64,
     pending_icons: HashSet<String>,
@@ -128,6 +136,7 @@ fn main() -> Result<()> {
         loaded: 0,
         selected: HashSet::new(),
         anchor: None,
+        view: None,
         handle: runtime.handle().clone(),
         push_generation: 0,
         pending_icons: HashSet::new(),
@@ -364,7 +373,7 @@ fn bind_callbacks(
                                 ui.set_status(format!("{report}").into());
                                 ui.set_last_synced(last_synced_text(&store).into());
                                 let _ = refresh_feeds(&ui, &store, &state);
-                                let _ = reload_preserving_selection(
+                                let _ = refresh_list_preserving_view(
                                     &ui,
                                     &store,
                                     &state,
@@ -846,8 +855,11 @@ fn spawn_sync(
                         ui.set_status(format!("{report}").into());
                         ui.set_last_synced(last_synced_text(&store).into());
                         let _ = refresh_feeds(&ui, &store, &state);
-                        let _ =
-                            reload_preserving_selection(&ui, &store, &state, ui.get_feed_index());
+                        let refresh_result =
+                            refresh_list_preserving_view(&ui, &store, &state, ui.get_feed_index());
+                        if let Err(error) = refresh_result {
+                            ui.set_status(format!("Refresh failed: {error}").into());
+                        }
                     }
                     Err(error) => {
                         if error.is_auth_error() {
@@ -1120,10 +1132,31 @@ struct SidebarRow {
 fn build_sidebar(
     feeds: Vec<nieuwser_core::store::FeedRow>,
     counts: &HashMap<String, i64>,
+    selected: &Stream,
     expanded: &HashSet<String>,
     total: i64,
     starred: i64,
 ) -> (Vec<SidebarRow>, Vec<Stream>) {
+    let selected_folder = match selected {
+        Stream::Folder(id) => Some(id.as_str()),
+        _ => None,
+    };
+    let selected_folder_name = selected_folder.and_then(|folder_id| {
+        feeds
+            .iter()
+            .find(|feed| feed.folder_id.as_deref() == Some(folder_id))
+            .and_then(|feed| feed.folder_name.clone())
+            .or_else(|| {
+                Some(
+                    folder_id
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(folder_id)
+                        .to_string(),
+                )
+            })
+    });
+
     let mut rows = vec![
         SidebarRow {
             id: "all".into(),
@@ -1159,7 +1192,8 @@ fn build_sidebar(
             continue;
         }
         let count = counts.get(&feed.id).copied().unwrap_or(0);
-        if count == 0 {
+        let selected_feed = matches!(selected, Stream::Feed(id) if id == &feed.id);
+        if count == 0 && !selected_feed {
             continue;
         }
         let shown = feed
@@ -1194,6 +1228,19 @@ fn build_sidebar(
                 ungrouped.push(row);
             }
         }
+    }
+
+    if let Some(folder_id) = selected_folder
+        && !groups.iter().any(|group| group.0 == folder_id)
+    {
+        let name = selected_folder_name.unwrap_or_else(|| {
+            folder_id
+                .rsplit('/')
+                .next()
+                .unwrap_or(folder_id)
+                .to_string()
+        });
+        groups.push((folder_id.to_string(), name, Vec::new()));
     }
 
     for (folder_id, name, feeds) in groups {
@@ -1313,7 +1360,7 @@ fn refresh_feeds(ui: &MainWindow, store: &Arc<Store>, state: &Arc<Mutex<UiState>
     let total = store.count_items(&Stream::All, read, search)?;
     let starred = store.count_items(&Stream::Starred, read, search)?;
     let expanded = state.lock().unwrap().expanded_folders.clone();
-    let (sidebar, streams) = build_sidebar(feeds, &counts, &expanded, total, starred);
+    let (sidebar, streams) = build_sidebar(feeds, &counts, &selected, &expanded, total, starred);
     let title_budget = sidebar_title_budget(ui.get_feed_width());
 
     let mut rows = Vec::with_capacity(sidebar.len());
@@ -1470,7 +1517,7 @@ fn load_stream(
         return Ok(());
     };
 
-    let query = ui.get_search_query();
+    let query = ui.get_search_query().to_string();
     let read = article_read_filter(ui.get_article_filter().as_str());
     let items = store.items_filtered(&stream, ARTICLE_PAGE, 0, read, Some(query.as_str()))?;
     let has_more = items.len() as i64 == ARTICLE_PAGE;
@@ -1481,6 +1528,11 @@ fn load_stream(
         state.loaded = state.items.len();
         state.selected.clear();
         state.anchor = None;
+        state.view = Some(ViewKey {
+            stream,
+            read,
+            query,
+        });
     }
     sync_article_rows(ui, state);
     ui.set_has_more_articles(has_more);
@@ -1662,56 +1714,90 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
     }
     ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
     let mut state = state.lock().unwrap();
-    let start = state.items.len();
     state.loaded += items.len();
-    state.items.extend(items);
+    let mut seen: HashSet<String> = state.items.iter().map(|item| item.id.clone()).collect();
     let model = ui.get_articles();
-    for item in &state.items[start..] {
-        let _ = model.push_row(article_row(item, state.selected.contains(&item.id)));
+    for item in items {
+        if !seen.insert(item.id.clone()) {
+            continue;
+        }
+        let row = article_row(&item, state.selected.contains(&item.id));
+        state.items.push(item);
+        let _ = model.push_row(row);
     }
     Ok(())
 }
 
-fn pin_item(items: &mut Vec<ItemSummary>, lead: &ItemSummary) {
-    if items.iter().any(|item| item.id == lead.id) {
-        return;
+fn merge_refreshed_items(
+    fetched: Vec<ItemSummary>,
+    previous: Vec<ItemSummary>,
+) -> Vec<ItemSummary> {
+    let mut items = fetched;
+    let mut seen: HashSet<String> = items.iter().map(|item| item.id.clone()).collect();
+    for item in previous {
+        if seen.insert(item.id.clone()) {
+            items.push(item);
+        }
     }
-    items.push(lead.clone());
     items.sort_by(|a, b| {
         b.timestamp_usec
             .cmp(&a.timestamp_usec)
             .then_with(|| b.id.cmp(&a.id))
     });
+    items
 }
 
-fn reload_preserving_selection(
+fn refresh_list_preserving_view(
     ui: &MainWindow,
     store: &Arc<Store>,
     state: &Arc<Mutex<UiState>>,
     stream_index: i32,
 ) -> Result<()> {
-    let (selected, anchor, lead, reader_open) = {
+    let stream = {
+        let state = state.lock().unwrap();
+        state.streams.get(stream_index.max(0) as usize).cloned()
+    };
+    let Some(stream) = stream else {
+        return Ok(());
+    };
+    let query = ui.get_search_query().to_string();
+    let read = article_read_filter(ui.get_article_filter().as_str());
+    let same_view = state
+        .lock()
+        .unwrap()
+        .view
+        .as_ref()
+        .is_some_and(|view| view.stream == stream && view.read == read && view.query == query);
+    if !same_view {
+        return load_stream(ui, store, state, stream_index);
+    }
+
+    let (lead_id, selected, anchor, previous, loaded) = {
         let state = state.lock().unwrap();
         let index = ui.get_article_index();
-        let lead = state
-            .items
-            .get(index.max(0) as usize)
-            .filter(|_| index >= 0)
-            .cloned();
+        let lead_id = if index >= 0 {
+            state.items.get(index as usize).map(|item| item.id.clone())
+        } else {
+            None
+        };
         (
+            lead_id,
             state.selected.clone(),
             state.anchor.clone(),
-            lead,
-            ui.get_compact_page().as_str() == "reader",
+            state.items.clone(),
+            state.loaded,
         )
     };
-    clear_reader_cache();
-    load_stream(ui, store, state, stream_index)?;
+
+    let limit = loaded.max(ARTICLE_PAGE as usize).min(1000) as i64;
+    let fetched = store.items_filtered(&stream, limit, 0, read, Some(query.as_str()))?;
+    let fetched_count = fetched.len();
+    let has_more = fetched_count as i64 == limit;
+    let items = merge_refreshed_items(fetched, previous);
     {
         let mut state = state.lock().unwrap();
-        if let Some(lead) = &lead {
-            pin_item(&mut state.items, lead);
-        }
+        state.items = items;
+        state.loaded = fetched_count;
         let items = &state.items;
         state.selected = selected
             .into_iter()
@@ -1720,20 +1806,19 @@ fn reload_preserving_selection(
         state.anchor = anchor.filter(|id| state.selected.contains(id));
     }
     sync_article_rows(ui, state);
-    if let Some(lead) = lead {
+    ui.set_has_more_articles(has_more);
+    if let Some(lead_id) = lead_id {
         let found = state
             .lock()
             .unwrap()
             .items
             .iter()
-            .position(|item| item.id == lead.id);
+            .position(|item| item.id == lead_id);
         if let Some(found) = found {
-            ui.set_article_index(found as i32);
-            ui.invoke_reveal_article(found as i32);
-            select_article(ui, store, state, found as i32, false, false)?;
-            if reader_open {
-                ui.set_compact_page("reader".into());
-            }
+            let found = found as i32;
+            ui.set_article_index(found);
+            ui.invoke_reveal_article(found);
+            update_adjacent_previews(ui, store, state, found);
         }
     }
     Ok(())
@@ -2342,10 +2427,6 @@ fn remember_reader(id: String, view: ReaderView) {
             cache.pop_front();
         }
     });
-}
-
-fn clear_reader_cache() {
-    READER_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 // Images may have finished loading while another article was open. Apply anything
@@ -3078,12 +3159,19 @@ mod reader_layout_tests {
         software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
     };
 
-    struct Headless(Rc<MinimalSoftwareWindow>);
+    struct Headless;
 
     impl Platform for Headless {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
-            Ok(self.0.clone())
+            Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
         }
+    }
+
+    fn init_headless() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            slint::platform::set_platform(Box::new(Headless)).unwrap();
+        });
     }
 
     #[test]
@@ -3118,8 +3206,7 @@ mod reader_layout_tests {
 
     #[test]
     fn long_reader_renders_and_scrolls() {
-        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
-        slint::platform::set_platform(Box::new(Headless(window))).unwrap();
+        init_headless();
         let ui = MainWindow::new().unwrap();
         ui.window().set_size(slint::PhysicalSize::new(1000, 800));
 
@@ -3372,6 +3459,101 @@ mod reader_layout_tests {
         assert_ne!(before_confirm.as_bytes(), confirm.as_bytes());
         ui.invoke_close_mark_all_confirm();
     }
+
+    fn test_item(
+        id: &str,
+        timestamp_usec: i64,
+        title: &str,
+        html: &str,
+    ) -> nieuwser_core::models::Item {
+        nieuwser_core::models::Item {
+            id: id.into(),
+            title: title.into(),
+            timestamp_usec: Some(timestamp_usec),
+            content: Some(nieuwser_core::models::Content {
+                content: html.into(),
+            }),
+            origin: Some(nieuwser_core::models::Origin {
+                stream_id: "feed/1".into(),
+                title: Some("Feed".into()),
+                html_url: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn refresh_keeps_reader_position_and_read_items() {
+        init_headless();
+        let ui = MainWindow::new().unwrap();
+        ui.window().set_size(slint::PhysicalSize::new(1000, 800));
+        ui.set_article_filter("unread".into());
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .reconcile_feeds(
+                &[nieuwser_core::models::Subscription {
+                    id: "feed/1".into(),
+                    title: "Feed".into(),
+                    ..Default::default()
+                }],
+                &[],
+            )
+            .unwrap();
+        let long = (0..300)
+            .map(|index| format!("<p>Paragraph {index}: Lorem ipsum dolor sit amet.</p>"))
+            .collect::<String>();
+        store
+            .upsert_items(&[
+                test_item("a", 2_000_000, "Article a", &long),
+                test_item("b", 1_000_000, "Article b", "<p>Short.</p>"),
+            ])
+            .unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let state = Arc::new(Mutex::new(UiState {
+            streams: vec![Stream::All],
+            expanded_folders: HashSet::new(),
+            items: Vec::new(),
+            loaded: 0,
+            selected: HashSet::new(),
+            anchor: None,
+            view: None,
+            handle: runtime.handle().clone(),
+            push_generation: 0,
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+            undo: VecDeque::new(),
+        }));
+        load_stream(&ui, &store, &state, 0).unwrap();
+        ui.set_article_index(0);
+        select_article(&ui, &store, &state, 0, false, false).unwrap();
+        ui.show().unwrap();
+        slint::platform::update_timers_and_animations();
+        let _ = ui.window().take_snapshot();
+
+        ui.invoke_scroll_reader(-300.0);
+        slint::platform::update_timers_and_animations();
+        let _ = ui.window().take_snapshot();
+        let reader_y = ui.get_reader_content_y();
+        assert!(reader_y < 0.0);
+
+        store.set_read(&["a".to_string()], true).unwrap();
+        store
+            .upsert_items(&[test_item("c", 3_000_000, "Article c", "<p>New.</p>")])
+            .unwrap();
+        refresh_list_preserving_view(&ui, &store, &state, 0).unwrap();
+        slint::platform::update_timers_and_animations();
+
+        assert_eq!(ui.get_reader_title().as_str(), "Article a");
+        assert!((ui.get_reader_content_y() - reader_y).abs() < 0.01);
+        let state = state.lock().unwrap();
+        let ids: Vec<&str> = state.items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["c", "a", "b"]);
+    }
 }
 
 #[cfg(test)]
@@ -3407,6 +3589,7 @@ mod selection_tests {
             loaded: 0,
             selected: HashSet::from(["old".to_string()]),
             anchor: None,
+            view: None,
             handle: runtime.handle().clone(),
             push_generation: 0,
             pending_icons: HashSet::new(),
@@ -3436,6 +3619,7 @@ mod selection_tests {
             loaded: 0,
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
+            view: None,
             handle: runtime.handle().clone(),
             push_generation: 0,
             pending_icons: HashSet::new(),
@@ -3473,6 +3657,7 @@ mod selection_tests {
             loaded: 0,
             selected: HashSet::new(),
             anchor: None,
+            view: None,
             handle: runtime.handle().clone(),
             push_generation: 0,
             pending_icons: HashSet::new(),
@@ -3502,6 +3687,7 @@ mod selection_tests {
             loaded: 0,
             selected: HashSet::from(["b".to_string()]),
             anchor: Some("b".to_string()),
+            view: None,
             handle: runtime.handle().clone(),
             push_generation: 0,
             pending_icons: HashSet::new(),
@@ -3514,19 +3700,20 @@ mod selection_tests {
     }
 
     #[test]
-    fn pins_the_open_item_in_chronological_order() {
-        let mut items = vec![summary("new"), summary("old")];
-        items[0].timestamp_usec = 30;
-        items[1].timestamp_usec = 10;
-        let mut lead = summary("mid");
-        lead.timestamp_usec = 20;
+    fn refresh_merges_new_rows_with_retained_ones() {
+        let mut fetched = vec![summary("new"), summary("kept")];
+        fetched[0].timestamp_usec = 30;
+        fetched[1].timestamp_usec = 20;
+        let mut retained = vec![summary("read"), summary("kept")];
+        retained[0].timestamp_usec = 10;
+        retained[0].read = true;
+        retained[1].timestamp_usec = 20;
+        retained[1].read = true;
 
-        pin_item(&mut items, &lead);
-        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
-        assert_eq!(ids, ["new", "mid", "old"]);
-
-        pin_item(&mut items, &lead);
-        assert_eq!(items.len(), 3);
+        let merged = merge_refreshed_items(fetched, retained);
+        let ids: Vec<&str> = merged.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["new", "kept", "read"]);
+        assert!(!merged[1].read);
     }
 }
 
@@ -3563,6 +3750,7 @@ mod undo_tests {
             loaded: 0,
             selected: HashSet::new(),
             anchor: None,
+            view: None,
             handle: runtime.handle().clone(),
             push_generation: 0,
             pending_icons: HashSet::new(),
@@ -3686,7 +3874,7 @@ mod sidebar_tests {
             ("feed/4".to_string(), 0),
         ]);
 
-        let (rows, streams) = build_sidebar(feeds, &counts, &HashSet::new(), 3, 1);
+        let (rows, streams) = build_sidebar(feeds, &counts, &Stream::All, &HashSet::new(), 3, 1);
 
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(
@@ -3725,7 +3913,7 @@ mod sidebar_tests {
         let counts = HashMap::from([("feed/1".to_string(), 2), ("feed/3".to_string(), 1)]);
         let expanded = HashSet::from(["user/-/label/News".to_string()]);
 
-        let (rows, streams) = build_sidebar(feeds, &counts, &expanded, 3, 0);
+        let (rows, streams) = build_sidebar(feeds, &counts, &Stream::All, &expanded, 3, 0);
 
         let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
         assert_eq!(
@@ -3746,6 +3934,48 @@ mod sidebar_tests {
         assert!(!rows[2].collapsed);
         assert!(rows[3].shown);
         assert!(rows[4].shown);
+    }
+
+    #[test]
+    fn keeps_the_selected_empty_feed_and_folder_visible() {
+        let feeds = vec![
+            feed("feed/1", "One", Some("user/-/label/News"), Some("News")),
+            feed("feed/2", "Two", Some("user/-/label/Tech"), Some("Tech")),
+            feed("feed/3", "Three", None, None),
+        ];
+        let counts = HashMap::from([
+            ("feed/1".to_string(), 0),
+            ("feed/2".to_string(), 0),
+            ("feed/3".to_string(), 1),
+        ]);
+
+        let (rows, streams) = build_sidebar(
+            feeds.clone(),
+            &counts,
+            &Stream::Feed("feed/1".into()),
+            &HashSet::new(),
+            1,
+            0,
+        );
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["all", "starred", "user/-/label/News", "feed/1", "feed/3"]
+        );
+        assert!(streams.contains(&Stream::Feed("feed/1".into())));
+
+        let (rows, streams) = build_sidebar(
+            feeds,
+            &counts,
+            &Stream::Folder("user/-/label/Tech".into()),
+            &HashSet::new(),
+            1,
+            0,
+        );
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["all", "starred", "user/-/label/Tech", "feed/3"]);
+        assert!(streams.contains(&Stream::Folder("user/-/label/Tech".into())));
+        assert_eq!(rows[2].count, 0);
     }
 
     #[test]
