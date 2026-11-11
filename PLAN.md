@@ -326,7 +326,7 @@ Working today:
   shortcuts and shortcut help, read/star/mark-all actions, refresh that preserves the open
   article's reader position and keeps read items visible until the view changes, and browser
   opening from the reader toolbar, keyboard, double-click, and middle-click.
-- Tests: 44 core tests plus 25 app tests, covering API parsing/auth, reader blocks,
+- Tests: 44 core tests plus 28 app tests, covering API parsing/auth, reader blocks,
   storage/migration, FTS search/backfill, read filtering, reconciliation, cache eviction, image
   URL safety, HTTP body limits, a mocked end-to-end sync, shortcut validation, article-list
   reveal, refresh retention, and long-reader rendering.
@@ -362,7 +362,8 @@ Recent changes (2026-11-10):
 - Refreshes now update the article list in place instead of rebuilding it: the open article's
   reader position is preserved, items read during the session stay visible in filtered lists
   until the view changes, and the selected feed/folder remains in the sidebar when its matching
-  count reaches zero.
+  count reaches zero. Rendering tests share one headless Slint platform and serialize on a
+  mutex, since Slint keeps the first installed platform for the whole test process.
 
 Recent changes (2026-10-24):
 

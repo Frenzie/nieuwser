@@ -3167,11 +3167,14 @@ mod reader_layout_tests {
         }
     }
 
-    fn init_headless() {
-        static INIT: std::sync::Once = std::sync::Once::new();
-        INIT.call_once(|| {
-            slint::platform::set_platform(Box::new(Headless)).unwrap();
-        });
+    // Slint keeps the installed platform for the whole test process, so tests that render run
+    // one at a time; winit initializes on the first window and then the headless platform can
+    // no longer be installed.
+    fn init_headless() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        slint::platform::set_platform(Box::new(Headless)).unwrap();
+        guard
     }
 
     #[test]
@@ -3206,7 +3209,7 @@ mod reader_layout_tests {
 
     #[test]
     fn long_reader_renders_and_scrolls() {
-        init_headless();
+        let _guard = init_headless();
         let ui = MainWindow::new().unwrap();
         ui.window().set_size(slint::PhysicalSize::new(1000, 800));
 
@@ -3484,7 +3487,7 @@ mod reader_layout_tests {
 
     #[test]
     fn refresh_keeps_reader_position_and_read_items() {
-        init_headless();
+        let _guard = init_headless();
         let ui = MainWindow::new().unwrap();
         ui.window().set_size(slint::PhysicalSize::new(1000, 800));
         ui.set_article_filter("unread".into());
@@ -3539,7 +3542,10 @@ mod reader_layout_tests {
         slint::platform::update_timers_and_animations();
         let _ = ui.window().take_snapshot();
         let reader_y = ui.get_reader_content_y();
-        assert!(reader_y < 0.0);
+        assert!(
+            reader_y < 0.0,
+            "reader should scroll before refresh; content-y was {reader_y}"
+        );
 
         store.set_read(&["a".to_string()], true).unwrap();
         store
@@ -3549,7 +3555,11 @@ mod reader_layout_tests {
         slint::platform::update_timers_and_animations();
 
         assert_eq!(ui.get_reader_title().as_str(), "Article a");
-        assert!((ui.get_reader_content_y() - reader_y).abs() < 0.01);
+        assert!(
+            (ui.get_reader_content_y() - reader_y).abs() < 0.01,
+            "refresh moved the reader from {reader_y} to {}",
+            ui.get_reader_content_y()
+        );
         let state = state.lock().unwrap();
         let ids: Vec<&str> = state.items.iter().map(|item| item.id.as_str()).collect();
         assert_eq!(ids, ["c", "a", "b"]);
@@ -3714,6 +3724,20 @@ mod selection_tests {
         let ids: Vec<&str> = merged.iter().map(|item| item.id.as_str()).collect();
         assert_eq!(ids, ["new", "kept", "read"]);
         assert!(!merged[1].read);
+    }
+
+    #[test]
+    fn refresh_merge_orders_equal_timestamps_by_id() {
+        let mut a = summary("aaa");
+        a.timestamp_usec = 20;
+        let mut b = summary("bbb");
+        b.timestamp_usec = 20;
+        let mut c = summary("ccc");
+        c.timestamp_usec = 30;
+
+        let merged = merge_refreshed_items(vec![a], vec![c, b]);
+        let ids: Vec<&str> = merged.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["ccc", "bbb", "aaa"]);
     }
 }
 
@@ -3934,6 +3958,33 @@ mod sidebar_tests {
         assert!(!rows[2].collapsed);
         assert!(rows[3].shown);
         assert!(rows[4].shown);
+    }
+
+    #[test]
+    fn keeps_the_selected_empty_folder_without_name_visible() {
+        let feeds = vec![feed("feed/3", "Three", None, None)];
+        let counts = HashMap::from([("feed/3".to_string(), 0)]);
+        let folder = Stream::Folder("user/-/label/Fresh".into());
+
+        let (rows, streams) = build_sidebar(feeds, &counts, &folder, &HashSet::new(), 0, 0);
+
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["all", "starred", "user/-/label/Fresh"]);
+        assert_eq!(rows[2].title, "Fresh");
+        assert_eq!(rows[2].count, 0);
+        assert!(streams.contains(&folder));
+    }
+
+    #[test]
+    fn hides_empty_counts_when_nothing_is_selected() {
+        let feeds = vec![feed("feed/1", "One", None, None)];
+        let counts = HashMap::from([("feed/1".to_string(), 0)]);
+
+        let (rows, streams) = build_sidebar(feeds, &counts, &Stream::All, &HashSet::new(), 0, 0);
+
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, vec!["all", "starred"]);
+        assert_eq!(streams, vec![Stream::All, Stream::Starred]);
     }
 
     #[test]
