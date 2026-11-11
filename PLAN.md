@@ -374,6 +374,8 @@ Recent changes (2026-11-11):
   server. `load_more` now dedupes against rows retained by a refresh before appending and
   advancing the page offset, and `reveal-article()` uses one row-height token plus the list height
   instead of assuming an internal `visible-height` property.
+- Updated dependencies: `rusqlite` 0.41 → 0.42 (bundled SQLite 3.54.1) plus lockfile-only patch
+  bumps (syn, uuid, itoa, crc32fast, webbrowser, webpki-root-certs, rustls-pki-types, …).
 
 Recent changes (2026-11-10):
 
