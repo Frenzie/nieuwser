@@ -444,6 +444,18 @@ component FeedSidebar inherits Rectangle {
                 accessible-item-index: i;
                 accessible-item-count: root.feeds.length;
                 accessible-item-selected: i == root.selected-index;
+                accessible-expandable: feed.kind == "folder";
+                accessible-expanded: feed.kind != "folder" || !feed.collapsed;
+                accessible-action-default => {
+                    if (root.interactive) {
+                        root.select-feed(i);
+                    }
+                }
+                accessible-action-expand => {
+                    if (root.interactive) {
+                        root.toggle-folder(i);
+                    }
+                }
 
                 HorizontalLayout {
                     padding: 8px;
@@ -596,6 +608,7 @@ export component MainWindow inherits Window {
     in-out property <bool> mark-read-on-open-browser: true;
     in-out property <string> article-filter: "all";
     in-out property <length> article-content-y: 0px;
+    private property <length> article-row-height: 64px;
     in-out property <length> reader-content-y: 0px;
     in-out property <string> search-query;
 
@@ -789,17 +802,21 @@ export component MainWindow inherits Window {
         main-focus.focus();
     }
 
+    // Slint 1.18 has no ensure-visible()/ListView.ensure-row-visible(), so map the row's
+    // top/bottom onto the list and clamp against its real content extent.
     public function reveal-article(index: int) {
-        let row-y = index * 64px;
-        let top = 0px - article-list.content-y;
-        if (row-y < top) {
-            article-list.content-y = 0px - row-y;
-        } else if (row-y + 64px > top + article-list.visible-height) {
-            article-list.content-y = 0px - (row-y + 64px - article-list.visible-height);
+        let row-top = index * article-row-height;
+        let row-bottom = row-top + article-row-height;
+        let view-top = 0px - article-list.content-y;
+        let view-bottom = view-top + article-list.height;
+        if (row-top < view-top) {
+            article-list.content-y = 0px - row-top;
+        } else if (row-bottom > view-bottom) {
+            article-list.content-y = 0px - (row-bottom - article-list.height);
         }
         article-list.content-y = Math.min(0px, Math.max(
             article-list.content-y,
-            article-list.visible-height - article-list.content-height));
+            article-list.height - article-list.content-height));
     }
 
     main-focus := FocusScope {
@@ -1124,7 +1141,7 @@ export component MainWindow inherits Window {
                         content-y <=> root.article-content-y;
                         accessible-role: list;
                         for article[i] in root.articles : Rectangle {
-                            height: 64px;
+                            height: root.article-row-height;
                             border-radius: 6px;
                             background: article.selected ? Theme.article-selected : transparent;
                             accessible-role: list-item;
@@ -1135,6 +1152,11 @@ export component MainWindow inherits Window {
                             accessible-item-index: i;
                             accessible-item-count: root.articles.length;
                             accessible-item-selected: article.selected;
+                            accessible-action-default => {
+                                if (!root.settings-open) {
+                                    root.select-article(i, false, false);
+                                }
+                            }
 
                             HorizontalLayout {
                                 padding: 8px;

@@ -124,9 +124,10 @@ at startup (`READER_LINE_HEIGHT`), because `StyledText` has no line-height prope
 
 Both `ListView`s expose accessibility semantics: the lists have `accessible-role: list`, and every
 feed and article row is a `list-item` with a composed label (unread/starred state, feed, age,
-unread counts) plus item index/count/selected. Row activation follows the same rule as the
-existing click gating (`accessible-enabled` mirrors it), so screen readers see the lists instead
-of anonymous rectangles.
+unread counts) plus item index/count/selected, enabled state, and a default action (select the
+feed / open the article). Folders additionally report expandable/expanded with an expand action.
+`reveal-article()` keeps the active row in view using the shared `article-row-height` token and
+the list's own height; Slint 1.18 has no `ensure-visible()`, so the arithmetic stays local.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
@@ -369,8 +370,10 @@ Known issues:
 Recent changes (2026-11-11):
 
 - Added accessibility semantics to the feed tree and article list (list/list-item roles, composed
-  labels, item index/count/selected), verified through Slint's runtime MCP server. `load_more` now
-  dedupes against rows retained by a refresh before appending and advancing the page offset.
+  labels, item index/count/selected, default/expand actions), verified through Slint's runtime MCP
+  server. `load_more` now dedupes against rows retained by a refresh before appending and
+  advancing the page offset, and `reveal-article()` uses one row-height token plus the list height
+  instead of assuming an internal `visible-height` property.
 
 Recent changes (2026-11-10):
 
