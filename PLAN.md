@@ -126,8 +126,14 @@ Both `ListView`s expose accessibility semantics: the lists have `accessible-role
 feed and article row is a `list-item` with a composed label (unread/starred state, feed, age,
 unread counts) plus item index/count/selected, enabled state, and a default action (select the
 feed / open the article). Folders additionally report expandable/expanded with an expand action.
-`reveal-article()` keeps the active row in view using the shared `article-row-height` token and
-the list's own height; Slint 1.18 has no `ensure-visible()`, so the arithmetic stays local.
+`reveal-article()` uses `ListView.ensure-row-visible()` with `ScrollBehavior.instant`, so holding
+`j`/`k` never queues smooth-scroll animations; the shared `article-row-height` token still sizes
+the rows.
+
+UI type is sized in `rem` against `Window.default-font-size: 15px`, so every interface label scales
+with that one value (body 1rem, secondary 0.733–0.867rem, headings 1.333–1.467rem). The reader is
+deliberately excluded: `ReaderText` and the reader title/meta keep absolute `px` so article text
+doesn't change when only the interface is scaled.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
@@ -368,6 +374,10 @@ Known issues:
 
 Recent changes (2026-11-11):
 
+- Moved the interface typography to `rem` against `Window.default-font-size: 15px`: 62 hard-coded
+  `px` sizes became relative values (body `1rem`, 12px → `0.8rem`, 11px → `0.733rem`, headings
+  `1.333–1.467rem`), so the UI now scales from one number. Reader typography stays in `px` because
+  article text has its own fixed reading scale.
 - Moved to Slint 1.19 (`pre-release/1.19`). 1.19.0 is not on crates.io yet, so `Cargo.toml` has
   a `[patch.crates-io]` block that builds Slint from that branch; drop the block once 1.19.0
   is published, since the `slint`/`slint-build` constraints stay at `1`. API changes

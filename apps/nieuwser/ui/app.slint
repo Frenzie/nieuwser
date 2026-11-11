@@ -58,6 +58,8 @@ export global Theme {
     out property <color> star: #c49a23;
 }
 
+// The reader keeps an absolute px scale, independent of the UI's rem base: article text
+// shouldn't shrink when only the interface is scaled.
 component ReaderText inherits StyledText {
     in property <string> kind;
     default-font-size: kind == "h1" ? 31px
@@ -124,7 +126,7 @@ component MenuButton inherits Rectangle {
         x: 10px;
         width: parent.width - 20px;
         text: root.text;
-        font-size: 13px;
+        font-size: 0.867rem;
         color: Theme.text;
         vertical-alignment: center;
     }
@@ -183,7 +185,7 @@ component FilterChip inherits Rectangle {
         color: root.selected ? Theme.accent : Theme.text-muted;
         horizontal-alignment: center;
         vertical-alignment: center;
-        font-size: 12px;
+        font-size: 0.8rem;
     }
 
     TouchArea {
@@ -220,19 +222,19 @@ component ReaderPreview inherits Rectangle {
         Text {
             text: root.label;
             color: Theme.text-muted;
-            font-size: 12px;
+            font-size: 0.8rem;
             font-weight: 600;
         }
         Text {
             text: root.title;
-            font-size: 24px;
+            font-size: 1.6rem;
             font-weight: 700;
             wrap: word-wrap;
         }
         Text {
             text: root.meta;
             color: Theme.text-muted;
-            font-size: 12px;
+            font-size: 0.8rem;
             wrap: word-wrap;
         }
         Rectangle {
@@ -241,7 +243,7 @@ component ReaderPreview inherits Rectangle {
         }
         Text {
             text: root.excerpt;
-            font-size: 15px;
+            font-size: 1rem;
             wrap: word-wrap;
         }
     }
@@ -262,7 +264,7 @@ component ShortcutRow inherits Rectangle {
             text: root.label;
             horizontal-stretch: 1;
             vertical-alignment: center;
-            font-size: 13px;
+            font-size: 0.867rem;
         }
 
         Rectangle {
@@ -278,7 +280,7 @@ component ShortcutRow inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 font-family: "monospace";
-                font-size: 12px;
+                font-size: 0.8rem;
                 color: Theme.text;
             }
 
@@ -336,7 +338,7 @@ component NavHint inherits Rectangle {
         Text {
             text: root.up ? "↑" : "↓";
             color: Theme.accent;
-            font-size: 15px;
+            font-size: 1rem;
             vertical-alignment: center;
         }
         for index in 3 : Rectangle {
@@ -349,7 +351,7 @@ component NavHint inherits Rectangle {
         Text {
             text: root.up ? "Previous article" : "Next article";
             color: Theme.text-muted;
-            font-size: 12px;
+            font-size: 0.8rem;
             vertical-alignment: center;
         }
     }
@@ -388,7 +390,7 @@ component ReaderSkeleton inherits Rectangle {
         Text {
             text: "Loading article…";
             color: Theme.text-faint;
-            font-size: 12px;
+            font-size: 0.8rem;
         }
     }
 }
@@ -476,7 +478,7 @@ component FeedSidebar inherits Rectangle {
                     if feed.kind == "folder" : Text {
                         text: feed.collapsed ? "▸" : "▾";
                         color: Theme.text-faint;
-                        font-size: 11px;
+                        font-size: 0.733rem;
                         vertical-alignment: center;
                     }
 
@@ -484,7 +486,7 @@ component FeedSidebar inherits Rectangle {
                         text: feed.title;
                         overflow: elide;
                         horizontal-stretch: 1;
-                        font-size: feed.kind == "folder" ? 12px : 13px;
+                        font-size: feed.kind == "folder" ? 0.8rem : 0.867rem;
                         font-weight: feed.kind == "folder" ? 600 : 400;
                         color: feed.kind == "folder" ? Theme.text-muted : Theme.text;
                         vertical-alignment: center;
@@ -494,7 +496,7 @@ component FeedSidebar inherits Rectangle {
                         text: feed.unread > 0 ? "(" + feed.unread + ")" : "";
                         width: 42px;
                         color: Theme.accent;
-                        font-size: 11px;
+                        font-size: 0.733rem;
                         horizontal-alignment: right;
                         vertical-alignment: center;
                     }
@@ -536,6 +538,8 @@ export component MainWindow inherits Window {
     preferred-height: 820px;
     min-width: 560px;
     min-height: 480px;
+    // All UI font sizes are in rem, relative to this body size.
+    default-font-size: 15px;
     background: Theme.bg;
 
     in property <[FeedRow]> feeds;
@@ -933,7 +937,7 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: "Nieuwser";
-                    font-size: 17px;
+                    font-size: 1.133rem;
                     font-weight: 700;
                     vertical-alignment: center;
                 }
@@ -962,7 +966,7 @@ export component MainWindow inherits Window {
                 if !root.compact : Text {
                     text: root.last-synced;
                     color: Theme.text-faint;
-                    font-size: 11px;
+                    font-size: 0.733rem;
                     vertical-alignment: center;
                 }
 
@@ -1122,7 +1126,7 @@ export component MainWindow inherits Window {
                         text: "No articles match this view.";
                         color: Theme.text-faint;
                         horizontal-alignment: center;
-                        font-size: 12px;
+                        font-size: 0.8rem;
                     }
 
                     article-list := ListView {
@@ -1155,7 +1159,7 @@ export component MainWindow inherits Window {
                                     width: 8px;
                                     horizontal-alignment: center;
                                     color: Theme.accent;
-                                    font-size: 8px;
+                                    font-size: 0.533rem;
                                     vertical-alignment: center;
                                 }
 
@@ -1163,7 +1167,7 @@ export component MainWindow inherits Window {
                                     spacing: 2px;
                                     Text {
                                         text: article.title;
-                                        font-size: 13px;
+                                        font-size: 0.867rem;
                                         font-weight: article.read ? 400 : 600;
                                         horizontal-alignment: left;
                                         overflow: elide;
@@ -1173,19 +1177,19 @@ export component MainWindow inherits Window {
                                         Text {
                                             text: article.feed;
                                             color: Theme.text-muted;
-                                            font-size: 11px;
+                                            font-size: 0.733rem;
                                             overflow: elide;
                                             horizontal-stretch: 1;
                                         }
                                         Text {
                                             text: article.time;
                                             color: Theme.text-faint;
-                                            font-size: 11px;
+                                            font-size: 0.733rem;
                                         }
                                         Text {
                                             text: article.starred ? "★" : "";
                                             color: Theme.star;
-                                            font-size: 11px;
+                                            font-size: 0.733rem;
                                         }
                                     }
                                 }
@@ -1471,7 +1475,7 @@ export component MainWindow inherits Window {
 
                                         Text {
                                             text: block.label;
-                                            font-size: 12px;
+                                            font-size: 0.8rem;
                                             color: Theme.text-muted;
                                             wrap: word-wrap;
                                         }
@@ -1495,7 +1499,7 @@ export component MainWindow inherits Window {
                                         spacing: 4px;
                                         if block.label != "" : Text {
                                             text: block.label;
-                                            font-size: 12px;
+                                            font-size: 0.8rem;
                                             font-weight: 600;
                                             color: Theme.text-muted;
                                         }
@@ -1527,7 +1531,7 @@ export component MainWindow inherits Window {
                                         text: block.label;
                                         width: 30px;
                                         color: Theme.text-muted;
-                                        font-size: 15px;
+                                        font-size: 1rem;
                                         vertical-alignment: top;
                                     }
 
@@ -1827,14 +1831,14 @@ export component MainWindow inherits Window {
 
                     Text {
                         text: "Mark all articles read?";
-                        font-size: 20px;
+                        font-size: 1.333rem;
                         font-weight: 700;
                     }
 
                     Text {
                         text: "Every article in the current view will be marked read on the server. This cannot be undone from Nieuwser.";
                         color: Theme.text-muted;
-                        font-size: 12px;
+                        font-size: 0.8rem;
                         wrap: word-wrap;
                         vertical-stretch: 1;
                     }
@@ -1904,14 +1908,14 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: root.settings-has-account ? "FreshRSS account" : "Connect to FreshRSS";
-                    font-size: 22px;
+                    font-size: 1.467rem;
                     font-weight: 700;
                 }
 
                 Text {
                     text: "Enter your server URL and API password. The password is exchanged for a token and is not saved. Switching accounts restarts Nieuwser with a separate database.";
                     color: Theme.text-muted;
-                    font-size: 12px;
+                    font-size: 0.8rem;
                     wrap: word-wrap;
                 }
 
@@ -1942,7 +1946,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: "Server URL";
                     color: Theme.text-muted;
-                    font-size: 12px;
+                    font-size: 0.8rem;
                     font-weight: 600;
                 }
                 LineEdit {
@@ -1954,7 +1958,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: "Username";
                     color: Theme.text-muted;
-                    font-size: 12px;
+                    font-size: 0.8rem;
                     font-weight: 600;
                 }
                 LineEdit {
@@ -1966,7 +1970,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: "API password";
                     color: Theme.text-muted;
-                    font-size: 12px;
+                    font-size: 0.8rem;
                     font-weight: 600;
                 }
                 LineEdit {
@@ -1978,7 +1982,7 @@ export component MainWindow inherits Window {
                 Text {
                     text: root.settings-status;
                     color: Theme.danger;
-                    font-size: 12px;
+                    font-size: 0.8rem;
                     wrap: word-wrap;
                 }
 
@@ -2068,14 +2072,14 @@ export component MainWindow inherits Window {
 
                     Text {
                         text: "Keyboard shortcuts";
-                        font-size: 22px;
+                        font-size: 1.467rem;
                         font-weight: 700;
                     }
 
                     Text {
                         text: "Click a key field, then press the new key. Escape cancels.";
                         color: Theme.text-muted;
-                        font-size: 12px;
+                        font-size: 0.8rem;
                         wrap: word-wrap;
                     }
 
@@ -2089,7 +2093,7 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "Change shortcuts";
                                 color: Theme.text-muted;
-                                font-size: 12px;
+                                font-size: 0.8rem;
                                 font-weight: 600;
                             }
 
@@ -2147,23 +2151,23 @@ export component MainWindow inherits Window {
                             Text {
                                 text: "Reader and navigation";
                                 color: Theme.text-muted;
-                                font-size: 12px;
+                                font-size: 0.8rem;
                                 font-weight: 600;
                             }
 
                             VerticalLayout {
                                 spacing: 5px;
-                                HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll; ×3 at top/bottom for previous / next"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page; ×3 at edges for previous / next"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Scroll by page; ×3 at edges for next / previous"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Swipe ↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Next / previous at reader end (compact)"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Shift+↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Extend article selection in the list"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 12px; } }
-                                HorizontalLayout { Text { text: "?"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 12px; } Text { text: "Show this help"; color: Theme.text-muted; font-size: 12px; } }
+                                HorizontalLayout { Text { text: "↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Scroll; ×3 at top/bottom for previous / next"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "PageUp / PageDown"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Scroll by page; ×3 at edges for previous / next"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Scroll by page; ×3 at edges for next / previous"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Swipe ↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Next / previous at reader end (compact)"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Shift+↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Extend article selection in the list"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "?"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Show this help"; color: Theme.text-muted; font-size: 0.8rem; } }
                             }
                         }
                     }
@@ -2171,7 +2175,7 @@ export component MainWindow inherits Window {
                     if root.shortcuts-status != "" : Text {
                         text: root.shortcuts-status;
                         color: Theme.danger;
-                        font-size: 12px;
+                        font-size: 0.8rem;
                         wrap: word-wrap;
                     }
 
