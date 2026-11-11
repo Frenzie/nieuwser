@@ -119,7 +119,14 @@ renders the block model in an all-at-once `VerticalLayout` inside a `Flickable`;
 leading blocks, and a skeleton covers the loading gap. Noto Emoji is bundled and registered as
 Slint's emoji fallback. Article images and feed icons are fetched on demand, cached in SQLite,
 rendered natively, and loaded with bounded concurrency; inline images are promoted out of
-paragraphs.
+paragraphs. The reader text uses a copy of the system sans font whose line metrics are rewritten
+at startup (`READER_LINE_HEIGHT`), because `StyledText` has no line-height property.
+
+Both `ListView`s expose accessibility semantics: the lists have `accessible-role: list`, and every
+feed and article row is a `list-item` with a composed label (unread/starred state, feed, age,
+unread counts) plus item index/count/selected. Row activation follows the same rule as the
+existing click gating (`accessible-enabled` mirrors it), so screen readers see the lists instead
+of anonymous rectangles.
 
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
@@ -358,6 +365,12 @@ Known issues:
   fixed by #13683 on master but not yet in a release. Explicit widths on `ReaderText` and the
   multi-pass `scroll_to_end` test mitigate it. Revisit when Slint 1.19 lands; an interim bottom
   spacer is the low-risk workaround.
+
+Recent changes (2026-11-11):
+
+- Added accessibility semantics to the feed tree and article list (list/list-item roles, composed
+  labels, item index/count/selected), verified through Slint's runtime MCP server. `load_more` now
+  dedupes against rows retained by a refresh before appending and advancing the page offset.
 
 Recent changes (2026-11-10):
 

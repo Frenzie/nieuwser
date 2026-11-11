@@ -1712,15 +1712,25 @@ fn load_more(ui: &MainWindow, store: &Store, state: &Arc<Mutex<UiState>>) -> Res
         ui.set_has_more_articles(false);
         return Ok(());
     }
-    ui.set_has_more_articles(items.len() as i64 == ARTICLE_PAGE);
-    let mut state = state.lock().unwrap();
-    state.loaded += items.len();
-    let mut seen: HashSet<String> = state.items.iter().map(|item| item.id.clone()).collect();
+    // A refresh retains rows that no longer match the filter, so the next page can overlap.
+    let page_full = items.len() as i64 == ARTICLE_PAGE;
+    let (mut state, mut seen) = {
+        let state = state.lock().unwrap();
+        let seen: HashSet<String> = state.items.iter().map(|item| item.id.clone()).collect();
+        (state, seen)
+    };
+    let added: Vec<ItemSummary> = items
+        .into_iter()
+        .filter(|item| seen.insert(item.id.clone()))
+        .collect();
+    if added.is_empty() {
+        ui.set_has_more_articles(false);
+        return Ok(());
+    }
+    ui.set_has_more_articles(page_full);
+    state.loaded += added.len();
     let model = ui.get_articles();
-    for item in items {
-        if !seen.insert(item.id.clone()) {
-            continue;
-        }
+    for item in added {
         let row = article_row(&item, state.selected.contains(&item.id));
         state.items.push(item);
         let _ = model.push_row(row);

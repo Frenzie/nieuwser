@@ -430,11 +430,20 @@ component FeedSidebar inherits Rectangle {
         }
 
         ListView {
+            accessible-role: list;
             for feed[i] in root.feeds : Rectangle {
                 clip: true;
                 height: feed.shown ? (feed.kind == "folder" ? 32px : 38px) : 0px;
                 border-radius: 6px;
                 background: i == root.selected-index ? Theme.feed-selected : transparent;
+                accessible-role: list-item;
+                accessible-label: feed.title
+                    + (feed.kind == "folder" ? " folder" : "")
+                    + (feed.unread > 0 ? ", " + feed.unread + " unread" : "");
+                accessible-enabled: root.interactive;
+                accessible-item-index: i;
+                accessible-item-count: root.feeds.length;
+                accessible-item-selected: i == root.selected-index;
 
                 HorizontalLayout {
                     padding: 8px;
@@ -1113,10 +1122,19 @@ export component MainWindow inherits Window {
 
                     article-list := ListView {
                         content-y <=> root.article-content-y;
+                        accessible-role: list;
                         for article[i] in root.articles : Rectangle {
                             height: 64px;
                             border-radius: 6px;
                             background: article.selected ? Theme.article-selected : transparent;
+                            accessible-role: list-item;
+                            accessible-label: (article.read ? "" : "Unread. ") + article.title
+                                + (article.starred ? ". Starred" : "")
+                                + ". " + article.feed + ". " + article.time;
+                            accessible-enabled: !root.settings-open;
+                            accessible-item-index: i;
+                            accessible-item-count: root.articles.length;
+                            accessible-item-selected: article.selected;
 
                             HorizontalLayout {
                                 padding: 8px;
