@@ -7,7 +7,7 @@ ifneq ($(SCCACHE),)
 export RUSTC_WRAPPER := $(SCCACHE)
 endif
 endif
-.PHONY: all build run dev test test-core check-core fmt check clean sccache-stats
+.PHONY: all build run dev slint-mcp test test-core check-core fmt check clean sccache-stats
 
 all: build
 
@@ -19,6 +19,14 @@ run:
 
 dev:
 	cargo run -p nieuwser
+
+# Slint's embedded MCP server for AI-assisted debugging (UI tree, screenshots, input).
+# Connect over Streamable HTTP at http://127.0.0.1:$(SLINT_MCP_PORT)/mcp. Set
+# SLINT_BACKEND=headless to run without a display.
+SLINT_MCP_PORT ?= 9315
+slint-mcp:
+	SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=$(SLINT_MCP_PORT) \
+		cargo run -p nieuwser --features slint/mcp
 
 test:
 	cargo test --workspace

@@ -37,6 +37,8 @@ Status: M0–M4 complete; M5 substantially complete (2026-10-21).
 crates/nieuwser-core/   API client, models, SQLite store, sync engine, reader conversion
 crates/nieuwser-cli/    headless sync/debug tool
 apps/nieuwser/          Slint application
+.opencode/skills/       vendored Slint AI skill (gitignored; see AI coding assistants)
+opencode.json           opencode project config: skills path and the slint-docs MCP server
 PLAN.md                 this file
 ```
 
@@ -445,6 +447,24 @@ cargo run -p nieuwser-cli -- --db ./nieuwser.db items --stream all --limit 20
 # NIEUWSER_DATA_DIR overrides the profile root; NIEUWSER_DB forces one database.
 cargo run -p nieuwser
 ```
+
+## AI coding assistants
+
+The official Slint skill and docs MCP server from
+[slint-ui/ai-plugins](https://github.com/slint-ui/ai-plugins) are installed for opencode:
+
+- `opencode.json` registers `.opencode/skills` and the remote `slint-docs` MCP server
+  (`https://docs.slint.dev/mcp`) for searching the Slint documentation.
+- `.opencode/skills/slint/` holds the vendored skill (`SKILL.md` plus `setup.md`,
+  `tools-install.md`, and `reference/`). It is gitignored because it is generated upstream;
+  re-copy it from a fresh checkout of `slint-ui/ai-plugins` to update. Restart opencode after
+  installing or editing it.
+- The skill's runtime-debugging MCP server is opt-in: `make slint-mcp` runs the app with
+  `--features slint/mcp`, `SLINT_EMIT_DEBUG_INFO=1`, and `SLINT_MCP_PORT=9315`. It exposes the UI
+  tree, properties, screenshots, and synthetic clicks/drags at
+  `http://127.0.0.1:9315/mcp` (Streamable HTTP). Add `SLINT_BACKEND=headless` when there is no
+  display, e.g. in CI or a container. The `mcp` feature is passed on the command line and is
+  deliberately not a `Cargo.toml` feature, so normal builds and CI are unaffected.
 
 ## Conventions
 
