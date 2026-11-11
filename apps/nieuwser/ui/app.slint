@@ -802,21 +802,9 @@ export component MainWindow inherits Window {
         main-focus.focus();
     }
 
-    // Slint 1.18 has no ensure-visible()/ListView.ensure-row-visible(), so map the row's
-    // top/bottom onto the list and clamp against its real content extent.
+    // Instant, so `j`/`k` never scroll to a row the previous animation hasn't reached yet.
     public function reveal-article(index: int) {
-        let row-top = index * article-row-height;
-        let row-bottom = row-top + article-row-height;
-        let view-top = 0px - article-list.content-y;
-        let view-bottom = view-top + article-list.height;
-        if (row-top < view-top) {
-            article-list.content-y = 0px - row-top;
-        } else if (row-bottom > view-bottom) {
-            article-list.content-y = 0px - (row-bottom - article-list.height);
-        }
-        article-list.content-y = Math.min(0px, Math.max(
-            article-list.content-y,
-            article-list.height - article-list.content-height));
+        article-list.ensure-row-visible(index, ScrollBehavior.instant);
     }
 
     main-focus := FocusScope {
@@ -1328,9 +1316,7 @@ export component MainWindow inherits Window {
                             } else {
                                 root.reader-swipe-x = 0px;
                                 root.reader-swipe-y = 0px;
-                                reader-scroll.content-y = Math.max(
-                                    reader-scroll.height - reader-scroll.content-height,
-                                    Math.min(0px, reader-scroll.content-y + delta));
+                                root.scroll-reader(delta);
                             }
                         }
                     }
@@ -1416,6 +1402,8 @@ export component MainWindow inherits Window {
 
                     reader-frame := Rectangle {
                         clip: true;
+                        accessible-role: text;
+                        accessible-label: root.reader-title;
 
                         reader-scroll := Flickable {
                             interactive: !root.compact;

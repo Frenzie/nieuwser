@@ -360,15 +360,24 @@ Working today:
 
 Known issues:
 
-- Reader bottom clipping: Slint 1.18.1 measures repeated layout cells containing word-wrapped
-  text at the cell's preferred width, so the Flickable can under-report its content height and
-  the last line of an article is occasionally unreachable by scrolling. Upstream Slint #13655,
-  fixed by #13683 on master but not yet in a release. Explicit widths on `ReaderText` and the
-  multi-pass `scroll_to_end` test mitigate it. Revisit when Slint 1.19 lands; an interim bottom
-  spacer is the low-risk workaround.
+- Reader bottom clipping: Slint 1.18.1 measured repeated layout cells containing word-wrapped
+  text at the cell's preferred width, so the Flickable could under-report its content height and
+  the last line of an article was occasionally unreachable by scrolling (upstream #13655, fixed
+  by #13683). The 1.19 bump below includes the fix; explicit widths on `ReaderText` and the
+  multi-pass `scroll_to_end` test remain as regression cover.
 
 Recent changes (2026-11-11):
 
+- Moved to Slint 1.19 (`pre-release/1.19`). 1.19.0 is not on crates.io yet, so `Cargo.toml` has
+  a `[patch.crates-io]` block that builds Slint from that branch; drop the block once 1.19.0
+  is published, since the `slint`/`slint-build` constraints stay at `1`. API changes
+  taken: `unstable-fontique-011` → `-012` (`fontique_012` module), the dev-only `i-slint-core`
+  pin, and `InternalEvent::Touch` gained `event_time`/`history`. Adopted 1.19 features:
+  `ListView.ensure-row-visible()` replaces the hand-rolled row math in `reveal-article()` (with
+  `ScrollBehavior.instant`, so `j`/`k` never queue up smooth-scroll animations), and the reader
+  is announced to assistive tech via `accessible-role: text`. Wheel/touchpad scrolling on the
+  reader now uses Slint's own `Flickable` handler, which 1.19 fixed (jump at gesture start,
+  platform conventions); the compact-mode touch drag still pans manually.
 - Added accessibility semantics to the feed tree and article list (list/list-item roles, composed
   labels, item index/count/selected, default/expand actions), verified through Slint's runtime MCP
   server. `load_more` now dedupes against rows retained by a refresh before appending and

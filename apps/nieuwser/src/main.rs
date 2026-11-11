@@ -2892,9 +2892,9 @@ const READER_LINE_HEIGHT: f32 = 1.625;
 const NOTO_EMOJI: &[u8] = include_bytes!("../assets/fonts/NotoEmoji-VariableFont_wght.ttf");
 
 fn configure_fonts() -> Result<()> {
-    use slint::fontique_011::fontique::{Blob, GenericFamily};
+    use slint::fontique_012::fontique::{Blob, GenericFamily};
 
-    let mut fonts = slint::fontique_011::shared_collection();
+    let mut fonts = slint::fontique_012::shared_collection();
     let family = fonts
         .register_fonts(Blob::new(Arc::new(NOTO_EMOJI)), None)
         .first()
@@ -2908,8 +2908,8 @@ fn configure_fonts() -> Result<()> {
 /// Registers a copy of the system sans font under our own family, with its line
 /// metrics rewritten so that StyledText (which has no line-height property)
 /// still lays out with a fixed reading line height.
-fn register_reader_font(fonts: &mut slint::fontique_011::fontique::Collection) {
-    use slint::fontique_011::fontique::{
+fn register_reader_font(fonts: &mut slint::fontique_012::fontique::Collection) {
+    use slint::fontique_012::fontique::{
         Attributes, Blob, FontInfoOverride, FontStyle, FontWeight, GenericFamily, QueryFamily,
         QueryStatus, SourceCache,
     };
@@ -3401,6 +3401,8 @@ mod reader_layout_tests {
                     id: 0,
                     position: point,
                     phase,
+                    event_time: None,
+                    history: Default::default(),
                 })
             };
             ui.window()
@@ -3424,10 +3426,15 @@ mod reader_layout_tests {
 
         // Dragging upward over the image at the top scrolls instead of navigating.
         ui.invoke_scroll_reader(100_000.0);
-        let image_before = ui.window().take_snapshot().unwrap();
+        let _ = ui.window().take_snapshot();
+        // The compact reader's touch drag pans the content itself, so check the scroll offset
+        // rather than a rendered frame.
         touch_drag((300.0, 400.0), (300.0, 260.0));
-        let image_after = ui.window().take_snapshot().unwrap();
-        assert_ne!(image_before.as_bytes(), image_after.as_bytes());
+        assert!(
+            ui.get_reader_content_y() < 0.0,
+            "dragging up at the top should scroll; content-y was {}",
+            ui.get_reader_content_y()
+        );
 
         // A downward swipe at the top goes to the previous article.
         ui.invoke_scroll_reader(100_000.0);
