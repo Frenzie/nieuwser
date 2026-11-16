@@ -170,9 +170,9 @@ paths exist but have not yet been exercised by a GitHub release run.
 
 Status: not started; deferred on 2026-10-22. No Android SDK/NDK or Rust Android targets are
 installed in the dev environment, so this is an assessment from the code and Slint 1.18.1
-documentation, not a verified build.
+documentation (the Slint version at the time), not a verified build.
 
-Feasible: Slint 1.18.1 supports Android through `backend-android-activity-06`. The app must be a
+Feasible: Slint 1.19 supports Android through `backend-android-activity-06`. The app must be a
 `cdylib` exporting `android_main`, call `slint::android::init(app)`, target API 26+, and use the
 Skia renderer (the only Android renderer). `cargo apk` is the shortest build path.
 
@@ -366,11 +366,11 @@ Working today:
 
 Known issues:
 
-- Reader bottom clipping: Slint 1.18.1 measured repeated layout cells containing word-wrapped
-  text at the cell's preferred width, so the Flickable could under-report its content height and
-  the last line of an article was occasionally unreachable by scrolling (upstream #13655, fixed
-  by #13683). The 1.19 bump below includes the fix; explicit widths on `ReaderText` and the
-  multi-pass `scroll_to_end` test remain as regression cover.
+- Reader layout still needs explicit widths on the body `ReaderText` chunks. With edition 1.19 the
+  repeated-cell measurement bug (#13655, fixed by #13683) is gone — the position is now reachable
+  to the last line — but a `StyledText` without a `width` still reports its unwrapped preferred
+  width, which overflows the reading column. The chunk widths therefore stay; only the reader
+  title lost its workaround width.
 
 Recent changes (2026-11-11):
 
@@ -378,16 +378,20 @@ Recent changes (2026-11-11):
   `px` sizes became relative values (body `1rem`, 12px → `0.8rem`, 11px → `0.733rem`, headings
   `1.333–1.467rem`), so the UI now scales from one number. Reader typography stays in `px` because
   article text has its own fixed reading scale.
-- Moved to Slint 1.19 (`pre-release/1.19`). 1.19.0 is not on crates.io yet, so `Cargo.toml` has
-  a `[patch.crates-io]` block that builds Slint from that branch; drop the block once 1.19.0
-  is published, since the `slint`/`slint-build` constraints stay at `1`. API changes
-  taken: `unstable-fontique-011` → `-012` (`fontique_012` module), the dev-only `i-slint-core`
-  pin, and `InternalEvent::Touch` gained `event_time`/`history`. Adopted 1.19 features:
-  `ListView.ensure-row-visible()` replaces the hand-rolled row math in `reveal-article()` (with
-  `ScrollBehavior.instant`, so `j`/`k` never queue up smooth-scroll animations), and the reader
-  is announced to assistive tech via `accessible-role: text`. Wheel/touchpad scrolling on the
-  reader now uses Slint's own `Flickable` handler, which 1.19 fixed (jump at gesture start,
-  platform conventions); the compact-mode touch drag still pans manually.
+- Upgraded to Slint 1.19.0 from crates.io; the temporary `[patch.crates-io]` block that tracked
+  the `pre-release/1.19` branch is gone, so the lockfile no longer contains a Git dependency.
+  **The project now opts into edition 1.19** via
+  `slint_build::CompilerConfiguration::with_edition((1, 19))` in `build.rs`, which brings the
+  `if`/`for` sizing fix that the reader previously worked around. API changes taken:
+  `unstable-fontique-011` → `-012` (`fontique_012` module) and the dev-only `i-slint-core` pin.
+  Adopted 1.19 features: `ListView.ensure-row-visible()` replaces the hand-rolled row math in
+  `reveal-article()` (with `ScrollBehavior.instant`, so `j`/`k` never queue up smooth-scroll
+  animations), the reader is announced to assistive tech via `accessible-role: text`, and
+  article text is `selectable` so it can be selected and copied. Wheel/touchpad scrolling on the
+  reader uses Slint's own `Flickable` handler instead of our arithmetic; the compact-mode touch
+  drag still pans manually. Settings that a project file would hold (edition today, font
+  locations later) are passed through `build.rs`; a `slint-project.json` is the natural next
+  step once there is more to configure.
 - Added accessibility semantics to the feed tree and article list (list/list-item roles, composed
   labels, item index/count/selected, default/expand actions), verified through Slint's runtime MCP
   server. `load_more` now dedupes against rows retained by a refresh before appending and

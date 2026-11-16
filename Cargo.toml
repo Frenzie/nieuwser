@@ -29,20 +29,3 @@ debug = 0
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-
-# Slint 1.19 is not on crates.io yet, so build it from the `pre-release/1.19`
-# branch. Remove this block once 1.19.0 is published; the version constraints
-# above (slint = "1") then resolve to it without further changes.
-[patch.crates-io]
-slint = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-slint-build = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-slint-macros = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-core = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-core-macros = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-common = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-compiler = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-backend-selector = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-backend-winit = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-backend-testing = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-renderer-femtovg = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }
-i-slint-renderer-software = { git = "https://github.com/slint-ui/slint", branch = "pre-release/1.19" }

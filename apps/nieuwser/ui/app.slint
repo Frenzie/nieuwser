@@ -62,6 +62,9 @@ export global Theme {
 // shouldn't shrink when only the interface is scaled.
 component ReaderText inherits StyledText {
     in property <string> kind;
+    // 1.19: users can select and copy article text. Copy uses Slint's own clipboard handling,
+    // so it works independently of the arboard-based "copy link" action.
+    selectable: true;
     default-font-size: kind == "h1" ? 31px
         : kind == "h2" ? 24px
         : kind == "h3" ? 20px
@@ -1432,7 +1435,6 @@ export component MainWindow inherits Window {
                                     letter-spacing: -0.3px;
                                     line-height-factor: 0.75;
                                     wrap: word-wrap;
-                                    width: reader-content.width;
                                 }
 
                                 if block.kind == "meta" : Text {
@@ -1541,7 +1543,9 @@ export component MainWindow inherits Window {
                                         for chunk in block.chunks : ReaderText {
                                             text: chunk;
                                             kind: block.kind;
-                                            // Slint 1.18 measures wrapped text at its unconstrained width.
+                                            // Still required with edition 1.19: a StyledText without an
+                                            // explicit width reports its unwrapped preferred width, so the
+                                            // chunks overflow the reading column. Wrap widths stay explicit.
                                             width: reader-content.width - 20px - block.indent * 18px
                                                 - (block.kind == "quote" ? 23px : 0px)
                                                 - (block.label != "" ? 38px : 0px);
