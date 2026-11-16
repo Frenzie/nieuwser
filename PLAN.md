@@ -378,11 +378,11 @@ Recent changes (2026-11-11):
   `px` sizes became relative values (body `1rem`, 12px → `0.8rem`, 11px → `0.733rem`, headings
   `1.333–1.467rem`), so the UI now scales from one number. Reader typography stays in `px` because
   article text has its own fixed reading scale.
-- Version 0.3.1. Article text is selectable (1.19), but a plain drag over an article must still
-  pan it: with `selectable` set, Slint's `StyledText` grabs the mouse on an ordinary press.
-  `mouse-drag-pan-enabled` on the reader `Flickable` makes a plain drag pan, while `Shift`+drag
-  falls through to the text and selects; copy uses Slint's own clipboard handling. The shortcut
-  help lists the gesture.
+- Version 0.3.1. Text selection in the reader was tried and reverted: Slint 1.19's `selectable`
+  `StyledText` grabs the mouse on an ordinary press, so dragging over an article selected text
+  instead of scrolling. `mouse-drag-pan-enabled` plus Shift+drag worked in principle but felt
+  poor in practice, so `selectable` is off and drag-to-scroll behaves as before. Revisit if Slint
+  grows a way to select without competing with the Flickable's drag gesture.
 - Upgraded to Slint 1.19.0 from crates.io; the temporary `[patch.crates-io]` block that tracked
   the `pre-release/1.19` branch is gone, so the lockfile no longer contains a Git dependency.
   **The project now opts into edition 1.19** via
@@ -391,10 +391,9 @@ Recent changes (2026-11-11):
   `unstable-fontique-011` → `-012` (`fontique_012` module) and the dev-only `i-slint-core` pin.
   Adopted 1.19 features: `ListView.ensure-row-visible()` replaces the hand-rolled row math in
   `reveal-article()` (with `ScrollBehavior.instant`, so `j`/`k` never queue up smooth-scroll
-  animations), the reader is announced to assistive tech via `accessible-role: text`, and
-  article text is `selectable` so it can be selected and copied. Wheel/touchpad scrolling on the
-  reader uses Slint's own `Flickable` handler instead of our arithmetic; the compact-mode touch
-  drag still pans manually. Settings that a project file would hold (edition today, font
+  animations), and the reader is announced to assistive tech via `accessible-role: text`.
+  Wheel/touchpad scrolling on the reader uses Slint's own `Flickable` handler instead of our
+  arithmetic; the compact-mode touch drag still pans manually. Settings that a project file would hold (edition today, font
   locations later) are passed through `build.rs`; a `slint-project.json` is the natural next
   step once there is more to configure.
 - Added accessibility semantics to the feed tree and article list (list/list-item roles, composed
