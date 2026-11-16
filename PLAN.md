@@ -378,6 +378,11 @@ Recent changes (2026-11-11):
   `px` sizes became relative values (body `1rem`, 12px → `0.8rem`, 11px → `0.733rem`, headings
   `1.333–1.467rem`), so the UI now scales from one number. Reader typography stays in `px` because
   article text has its own fixed reading scale.
+- Version 0.3.1. Article text is selectable (1.19), but a plain drag over an article must still
+  pan it: with `selectable` set, Slint's `StyledText` grabs the mouse on an ordinary press.
+  `mouse-drag-pan-enabled` on the reader `Flickable` makes a plain drag pan, while `Shift`+drag
+  falls through to the text and selects; copy uses Slint's own clipboard handling. The shortcut
+  help lists the gesture.
 - Upgraded to Slint 1.19.0 from crates.io; the temporary `[patch.crates-io]` block that tracked
   the `pre-release/1.19` branch is gone, so the lockfile no longer contains a Git dependency.
   **The project now opts into edition 1.19** via

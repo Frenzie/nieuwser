@@ -1417,6 +1417,11 @@ export component MainWindow inherits Window {
                             content-y <=> root.reader-content-y;
                             content-height: reader-content.preferred-height;
                             content-width: self.width;
+                            // A selectable StyledText grabs the mouse on an ordinary press, which
+                            // would turn every drag over an article into a text selection. With
+                            // mouse-drag-panning a plain drag pans here, while Shift+drag still
+                            // reaches the text and selects. Touch panning is unaffected.
+                            mouse-drag-pan-enabled: !root.compact;
 
                             reader-content := VerticalLayout {
                                 width: Math.min(reader-scroll.width, 640px);
@@ -2166,6 +2171,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "Space / Shift+Space"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Scroll by page; ×3 at edges for next / previous"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Swipe ↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Next / previous at reader end (compact)"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Shift+drag"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Select article text to copy"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 0.8rem; } }
