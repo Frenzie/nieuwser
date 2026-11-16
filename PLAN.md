@@ -116,7 +116,9 @@ because that compositor does not expose them.
 
 Reader blocks use native `StyledText` with inline emphasis, code, and clickable links. The reader
 renders the block model in an all-at-once `VerticalLayout` inside a `Flickable`; title/meta are
-leading blocks, and a skeleton covers the loading gap. Noto Emoji is bundled and registered as
+leading blocks — the meta line is "feed · author · date", skipping empty parts — and a skeleton
+covers the loading gap. Dates are absolute ("29 Feb 2024"), computed in UTC from the stored
+`published` seconds so no timezone database is needed; the article list keeps its relative ages. Noto Emoji is bundled and registered as
 Slint's emoji fallback. Article images and feed icons are fetched on demand, cached in SQLite,
 rendered natively, and loaded with bounded concurrency; inline images are promoted out of
 paragraphs. The reader text uses a copy of the system sans font whose line metrics are rewritten
@@ -374,6 +376,9 @@ Known issues:
 
 Recent changes (2026-11-11):
 
+- The reader's meta line now ends with the article's published date (`29 Feb 2024`, UTC), next to
+  the feed and author; blank authors and unknown dates drop out instead of leaving separators.
+  Both the reader and the adjacent-article preview share one `item_meta` helper.
 - Moved the interface typography to `rem` against `Window.default-font-size: 15px`: 62 hard-coded
   `px` sizes became relative values (body `1rem`, 12px → `0.8rem`, 11px → `0.733rem`, headings
   `1.333–1.467rem`), so the UI now scales from one number. Reader typography stays in `px` because

@@ -1885,17 +1885,21 @@ fn set_adjacent_preview(
     }
 }
 
-fn summary_meta(item: &ItemSummary) -> String {
-    let mut meta = item.feed_title.clone();
-    if let Some(author) = item
-        .author
-        .as_ref()
-        .filter(|author| !author.trim().is_empty())
-    {
+fn item_meta(feed_title: &str, author: Option<&str>, published: i64) -> String {
+    let mut meta = feed_title.to_string();
+    if let Some(author) = author.filter(|author| !author.trim().is_empty()) {
         meta.push_str(" · ");
         meta.push_str(author);
     }
+    if let Some(date) = absolute_date(published) {
+        meta.push_str(" · ");
+        meta.push_str(&date);
+    }
     meta
+}
+
+fn summary_meta(item: &ItemSummary) -> String {
+    item_meta(&item.feed_title, item.author.as_deref(), item.published)
 }
 
 fn preview_excerpt(store: &Store, id: &str) -> String {
@@ -1941,11 +1945,11 @@ fn select_article(
     ui.invoke_scroll_reader_to_top();
     ui.set_reader_loading(false);
 
-    let mut meta = summary.feed_title.clone();
-    if let Some(author) = summary.author.as_ref().filter(|a| !a.trim().is_empty()) {
-        meta.push_str(" · ");
-        meta.push_str(author);
-    }
+    let meta = item_meta(
+        &summary.feed_title,
+        summary.author.as_deref(),
+        summary.published,
+    );
     ui.set_reader_title(display_title(&summary.title).into());
     ui.set_reader_meta(meta.into());
 
@@ -1970,11 +1974,7 @@ fn select_article(
     };
     let needs_fetch = html.trim().is_empty();
 
-    let mut meta = item.feed_title.clone();
-    if let Some(author) = item.author.as_ref().filter(|a| !a.trim().is_empty()) {
-        meta.push_str(" · ");
-        meta.push_str(author);
-    }
+    let meta = item_meta(&item.feed_title, item.author.as_deref(), item.published);
     let title = display_title(&item.title).to_string();
     ui.set_reader_title(title.clone().into());
     ui.set_reader_meta(meta.clone().into());
@@ -2865,6 +2865,34 @@ fn display_title(title: &str) -> String {
     } else {
         title.to_string()
     }
+}
+
+// "18 Mar 2024" — UTC, since the app stores UTC seconds and has no timezone database.
+fn absolute_date(secs: i64) -> Option<String> {
+    if secs <= 0 {
+        return None;
+    }
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let days = secs.div_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let month = *MONTHS.get(month as usize - 1)?;
+    Some(format!("{day} {month} {year}"))
+}
+
+// Howard Hinnant's days-to-civil algorithm, shifted to the 0000-03-01 era.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
 }
 
 fn relative_time(secs: i64) -> String {
@@ -4069,5 +4097,36 @@ mod sync_label_tests {
         assert_eq!(sync_age_at(now - 60, now), "1m ago");
         assert_eq!(sync_age_at(now - 3_600, now), "1h ago");
         assert_eq!(sync_age_at(now - 86_400, now), "1d ago");
+    }
+
+    #[test]
+    fn formats_absolute_dates_in_utc() {
+        assert_eq!(absolute_date(0), None);
+        assert_eq!(absolute_date(-1), None);
+        // 1970-01-01 and the last second of the day.
+        assert_eq!(absolute_date(1).as_deref(), Some("1 Jan 1970"));
+        assert_eq!(absolute_date(86_399).as_deref(), Some("1 Jan 1970"));
+        assert_eq!(absolute_date(86_400).as_deref(), Some("2 Jan 1970"));
+        // Leap day, then the day after.
+        assert_eq!(absolute_date(1_709_164_800).as_deref(), Some("29 Feb 2024"));
+        assert_eq!(absolute_date(1_709_251_200).as_deref(), Some("1 Mar 2024"));
+        // Year boundary.
+        assert_eq!(absolute_date(1_735_689_599).as_deref(), Some("31 Dec 2024"));
+        assert_eq!(absolute_date(1_735_689_600).as_deref(), Some("1 Jan 2025"));
+    }
+
+    #[test]
+    fn reader_meta_lists_feed_author_and_date() {
+        assert_eq!(
+            item_meta("Feed", Some("Jane Doe"), 1_709_164_800),
+            "Feed · Jane Doe · 29 Feb 2024"
+        );
+        // Blank authors and unknown dates are skipped rather than leaving empty separators.
+        assert_eq!(
+            item_meta("Feed", Some("  "), 1_709_164_800),
+            "Feed · 29 Feb 2024"
+        );
+        assert_eq!(item_meta("Feed", None, 0), "Feed");
+        assert_eq!(item_meta("Feed", Some("Jane Doe"), 0), "Feed · Jane Doe");
     }
 }
