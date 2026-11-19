@@ -3228,6 +3228,7 @@ dependencies = [
  "i-slint-core",
  "image",
  "nieuwser-core",
+ "shell-words",
  "slint",
  "slint-build",
  "tokio",
@@ -4744,6 +4745,12 @@ checksum = "b4eceb519ec34d8290aaf6e46f435102f2bfa63f22b05a144fb16ab266d3b198"
 dependencies = [
  "stable_deref_trait",
 ]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"

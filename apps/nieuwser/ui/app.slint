@@ -582,7 +582,9 @@ export component MainWindow inherits Window {
     public function open-menu(kind: int, pointer-x: length, pointer-y: length) {
         root.menu-kind = kind;
         root.menu-x = pointer-x > root.width - 220px ? root.width - 220px : pointer-x;
-        root.menu-y = pointer-y > root.height - 230px ? root.height - 230px : pointer-y;
+        let menu-height = root.menu-kind == 1 ? 72px
+            : 210px + (root.open-with-command != "" ? 30px : 0px);
+        root.menu-y = pointer-y > root.height - menu-height - 20px ? root.height - menu-height - 20px : pointer-y;
         root.menu-open = true;
     }
 
@@ -629,6 +631,13 @@ export component MainWindow inherits Window {
     in-out property <string> shortcut-read: "r";
     in-out property <string> shortcut-star: "f";
     in-out property <string> shortcut-open: "o";
+    // Command template for Shift+O; `{}` is replaced by the article URL.
+    in-out property <string> open-with-command: "mpv --force-window=yes {}";
+    // Height of the optional "Open with" row in the article context menu.
+    property <length> open-with-row: open-with-command != "" ? 30px : 0px;
+    // Just the program name for labels, so a long command doesn't elide mid-argument.
+    // The host updates this together with `open-with-command`.
+    in property <string> open-with-program: "mpv";
     in-out property <string> shortcuts-status;
     private property <bool> mark-all-confirm-open: false;
     private property <bool> shortcuts-open: false;
@@ -655,6 +664,8 @@ export component MainWindow inherits Window {
     callback set-selection-read(bool);
     callback set-selection-starred(bool);
     callback open-selection();
+    callback open-selection-with();
+    callback set-open-with-command(string);
     callback copy-selection-links();
     callback select-all();
     callback move-list-selection(int);
@@ -889,6 +900,11 @@ export component MainWindow inherits Window {
                 && !root.shortcuts-open
                 && (!root.compact || !root.feed-drawer-open)) {
                 root.undo();
+                accept
+            } else if (event.text == "O" && event.modifiers.shift
+                && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta
+                && root.open-with-command != "") {
+                root.open-selection-with();
                 accept
             } else if ((event.text == root.shortcut-open
                     && !event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta)
@@ -1700,7 +1716,8 @@ export component MainWindow inherits Window {
                 Rectangle { width: root.menu-x; }
                 Rectangle {
                     width: 210px;
-                    height: root.menu-kind == 1 ? 72px : 210px;
+                    height: root.menu-kind == 1 ? 72px
+                        : 210px + (root.open-with-command != "" ? 30px : 0px);
                     background: Theme.surface;
                     border-width: 1px;
                     border-color: Theme.border;
@@ -1724,6 +1741,8 @@ export component MainWindow inherits Window {
                             root.refresh();
                         }
                     }
+                    // The "open with" row only exists when a command is configured; the rows
+                    // below it shift down by `open-with-row`.
                     MenuButton {
                         x: 4px; y: 4px; width: parent.width - 8px; height: 30px;
                         text: "Open in browser";
@@ -1734,7 +1753,16 @@ export component MainWindow inherits Window {
                         }
                     }
                     MenuButton {
-                        x: 4px; y: 36px; width: parent.width - 8px; height: 30px;
+                        x: 4px; y: 4px + open-with-row; width: parent.width - 8px; height: 30px;
+                        text: "Open with " + root.open-with-program;
+                        visible: root.menu-kind == 2 && root.open-with-command != "";
+                        activated => {
+                            root.menu-open = false;
+                            root.open-selection-with();
+                        }
+                    }
+                    MenuButton {
+                        x: 4px; y: 36px + open-with-row; width: parent.width - 8px; height: 30px;
                         text: "Copy link";
                         visible: root.menu-kind == 2;
                         activated => {
@@ -1742,9 +1770,9 @@ export component MainWindow inherits Window {
                             root.copy-selection-links();
                         }
                     }
-                    Rectangle { x: 4px; y: 68px; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
+                    Rectangle { x: 4px; y: 68px + open-with-row; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
                     MenuButton {
-                        x: 4px; y: 71px; width: parent.width - 8px; height: 30px;
+                        x: 4px; y: 71px + open-with-row; width: parent.width - 8px; height: 30px;
                         text: "Mark as read";
                         visible: root.menu-kind == 2;
                         activated => {
@@ -1753,7 +1781,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     MenuButton {
-                        x: 4px; y: 103px; width: parent.width - 8px; height: 30px;
+                        x: 4px; y: 103px + open-with-row; width: parent.width - 8px; height: 30px;
                         text: "Mark as unread";
                         visible: root.menu-kind == 2;
                         activated => {
@@ -1761,9 +1789,9 @@ export component MainWindow inherits Window {
                             root.set-selection-read(false);
                         }
                     }
-                    Rectangle { x: 4px; y: 135px; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
+                    Rectangle { x: 4px; y: 135px + open-with-row; width: parent.width - 8px; height: 1px; background: Theme.border; visible: root.menu-kind == 2; }
                     MenuButton {
-                        x: 4px; y: 138px; width: parent.width - 8px; height: 30px;
+                        x: 4px; y: 138px + open-with-row; width: parent.width - 8px; height: 30px;
                         text: "Add star";
                         visible: root.menu-kind == 2;
                         activated => {
@@ -1772,7 +1800,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     MenuButton {
-                        x: 4px; y: 170px; width: parent.width - 8px; height: 30px;
+                        x: 4px; y: 170px + open-with-row; width: parent.width - 8px; height: 30px;
                         text: "Remove star";
                         visible: root.menu-kind == 2;
                         activated => {
@@ -1895,15 +1923,22 @@ export component MainWindow inherits Window {
 
         Rectangle {
             width: 460px;
-            height: 560px;
+            height: min(600px, root.height - 24px);
             x: (parent.width - 460px) / 2;
-            y: (parent.height - 560px) / 2;
+            y: (parent.height - self.height) / 2;
             background: Theme.surface;
             border-radius: 10px;
             border-width: 1px;
             border-color: Theme.settings-border;
 
-            VerticalLayout {
+            // The form outgrew a short window once the external-program field was added.
+            settings-scroll := ScrollView {
+                width: parent.width;
+                height: parent.height;
+                horizontal-scrollbar-policy: always-off;
+
+                VerticalLayout {
+                width: settings-scroll.visible-width - 14px;
                 padding: 24px;
                 spacing: 8px;
 
@@ -1929,7 +1964,7 @@ export component MainWindow inherits Window {
                 }
 
                 CheckBox {
-                    text: "Mark articles read when opening in browser";
+                    text: "Mark articles read when opened externally";
                     checked <=> root.mark-read-on-open-browser;
                     toggled => {
                         root.set-mark-read-on-open-browser(self.checked);
@@ -1942,6 +1977,18 @@ export component MainWindow inherits Window {
                     toggled => {
                         root.set-dark-mode(self.checked);
                     }
+                }
+
+                Text {
+                    text: "External program (Shift+O): {} is the article URL; leave empty to hide.";
+                    color: Theme.text-muted;
+                    font-size: 0.8rem;
+                    wrap: word-wrap;
+                }
+                LineEdit {
+                    text <=> root.open-with-command;
+                    placeholder-text: "mpv --force-window=yes {}";
+                    edited => { root.set-open-with-command(self.text); }
                 }
 
                 Text {
@@ -2016,6 +2063,7 @@ export component MainWindow inherits Window {
                             root.submit-settings();
                         }
                     }
+                }
                 }
             }
         }
@@ -2165,6 +2213,7 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: "Swipe →"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Back to article list (compact reader)"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Home / End"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Reader start / end"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Ctrl+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Open in browser"; color: Theme.text-muted; font-size: 0.8rem; } }
+                                HorizontalLayout { Text { text: "Shift+O"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Open with the configured program"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Ctrl+A"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Select all articles in the current view"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Shift+↑ / ↓"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Extend article selection in the list"; color: Theme.text-muted; font-size: 0.8rem; } }
                                 HorizontalLayout { Text { text: "Esc"; width: 130px; color: Theme.accent; font-family: "monospace"; font-size: 0.8rem; } Text { text: "Close dialog, drawer, or reader"; color: Theme.text-muted; font-size: 0.8rem; } }

@@ -165,6 +165,9 @@ fn main() -> Result<()> {
         ui.set_settings_has_account(true);
     }
     ui.set_last_synced(last_synced_text(&store).into());
+    let open_with = saved_open_with_command(&store);
+    ui.set_open_with_program(command_program(&open_with).unwrap_or_default().into());
+    ui.set_open_with_command(open_with.into());
     ui.set_mark_read_on_open(store.state("mark_read_on_open")?.as_deref() != Some("0"));
     ui.set_mark_read_on_open_browser(
         store.state("mark_read_on_open_browser")?.as_deref() != Some("0"),
@@ -672,6 +675,38 @@ fn bind_callbacks(
         ui.on_open_selection(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 open_selected(&ui, &store, &state, ui.get_mark_read_on_open_browser());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        let state = state.clone();
+        ui.on_open_selection_with(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                open_selected_with_command(&ui, &store, &state, ui.get_mark_read_on_open_browser());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let store = store.clone();
+        ui.on_set_open_with_command(move |command| {
+            if let Some(ui) = ui_weak.upgrade() {
+                let command = command.trim().to_string();
+                match store.set_state("open_with_command", &command) {
+                    Ok(()) => {
+                        ui.set_open_with_program(
+                            command_program(&command).unwrap_or_default().into(),
+                        );
+                        ui.set_open_with_command(command.into());
+                    }
+                    Err(error) => {
+                        ui.set_status(format!("Settings failed: {error}").into());
+                    }
+                }
             }
         });
     }
@@ -2769,18 +2804,74 @@ fn open_selected(
     state: &Arc<Mutex<UiState>>,
     mark_read: bool,
 ) {
-    let links = selected_links(state);
-    if links.is_empty() {
+    open_selected_with(ui, store, state, mark_read, open_external, "Opened");
+}
+
+// Opens the selected article links with the configured external program.
+fn open_selected_with_command(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    mark_read: bool,
+) {
+    let template = ui.get_open_with_command().to_string();
+    let Some(program) = command_program(&template) else {
+        ui.set_status("Set an external program in Settings first.".into());
+        return;
+    };
+    if selected_links(state).is_empty() {
         ui.set_status("No link for the selected article(s).".into());
         return;
     }
+    let result = open_selected_with(
+        ui,
+        store,
+        state,
+        mark_read,
+        |link| {
+            split_command(&template, link)
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command")
+                })
+                .and_then(|parts| launch_command(&parts))
+        },
+        &format!("Opened with {program}"),
+    );
+    if let Some(error) = result {
+        ui.set_status(format!("Could not run {program}: {error}").into());
+    }
+}
+
+// Runs the browser opener or the configured program, then marks what actually opened as read.
+fn open_selected_with(
+    ui: &MainWindow,
+    store: &Arc<Store>,
+    state: &Arc<Mutex<UiState>>,
+    mark_read: bool,
+    open: impl Fn(&str) -> std::io::Result<()>,
+    status_prefix: &str,
+) -> Option<std::io::Error> {
+    let links = selected_links(state);
+    if links.is_empty() {
+        ui.set_status("No link for the selected article(s).".into());
+        return None;
+    }
     let mut opened_links = HashSet::new();
+    let mut last_error = None;
     for link in &links {
-        if open_external(link).is_ok() {
-            opened_links.insert(link.as_str());
+        match open(link) {
+            Ok(()) => {
+                opened_links.insert(link.as_str());
+            }
+            Err(error) => last_error = Some(error),
         }
     }
     let opened = opened_links.len();
+    if opened == 0
+        && let Some(error) = last_error.take()
+    {
+        return Some(error);
+    }
     if mark_read && opened > 0 {
         let ids: Vec<String> = {
             let state = state.lock().unwrap();
@@ -2800,10 +2891,68 @@ fn open_selected(
             ui.set_status(
                 format!("Opened {opened} link(s), but marking read failed: {error}").into(),
             );
-            return;
+            return None;
         }
     }
-    ui.set_status(format!("Opened {opened} link(s).").into());
+    let suffix = if opened == 1 { "" } else { "s" };
+    ui.set_status(format!("{status_prefix} {opened} link{suffix}.").into());
+    last_error
+}
+
+// The default for the "open with" command, and a visible example of the `{}` placeholder.
+const OPEN_WITH_DEFAULT: &str = "mpv --force-window=yes {}";
+
+fn saved_open_with_command(store: &Store) -> String {
+    store
+        .state("open_with_command")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| OPEN_WITH_DEFAULT.into())
+}
+
+// Splits a command template into arguments the way a POSIX shell would, without running one.
+// `{}` in any argument is replaced by the URL; without a placeholder the URL is appended.
+fn split_command(template: &str, url: &str) -> Option<Vec<String>> {
+    let template = template.trim();
+    if template.is_empty() {
+        return None;
+    }
+    let mut parts = shell_words::split(template).ok()?;
+    if parts.is_empty() {
+        return None;
+    }
+    let mut substituted = false;
+    for part in &mut parts {
+        if part.contains("{}") {
+            *part = part.replace("{}", url);
+            substituted = true;
+        }
+    }
+    if !substituted {
+        parts.push(url.to_string());
+    }
+    Some(parts)
+}
+
+// The program name for status messages: the first argument's file name, without a path.
+fn command_program(template: &str) -> Option<String> {
+    let first = shell_words::split(template.trim())
+        .ok()?
+        .into_iter()
+        .next()?;
+    let name = first.rsplit(['/', '\\']).next().unwrap_or(&first);
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn launch_command(parts: &[String]) -> std::io::Result<()> {
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty command"))?;
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map(|_| ())
 }
 
 fn copy_selected_links(ui: &MainWindow, state: &Arc<Mutex<UiState>>) {
@@ -3530,6 +3679,56 @@ mod reader_layout_tests {
         }
     }
 
+    // Drives the real callback end to end: a bogus program must surface an error status and
+    // must not mark the article read.
+    #[test]
+    fn open_with_command_reports_failures_and_leaves_the_article_unread() {
+        let _guard = init_headless();
+        let ui = MainWindow::new().unwrap();
+        ui.set_open_with_command("nieuwser-missing-program-test {}".into());
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut item = nieuwser_core::store::ItemSummary {
+            id: "a".into(),
+            feed_id: "feed/1".into(),
+            feed_title: "Feed".into(),
+            title: "Article".into(),
+            author: None,
+            published: 1_700_000_000,
+            href: None,
+            read: false,
+            starred: false,
+            timestamp_usec: 1_700_000_000_000_000,
+        };
+        item.href = Some("https://example.com/v".into());
+        let state = Arc::new(Mutex::new(UiState {
+            streams: vec![Stream::All],
+            expanded_folders: HashSet::new(),
+            items: vec![item],
+            loaded: 1,
+            selected: HashSet::from(["a".to_string()]),
+            anchor: None,
+            view: None,
+            handle: runtime.handle().clone(),
+            push_generation: 0,
+            pending_icons: HashSet::new(),
+            pending_media: HashSet::new(),
+            undo: VecDeque::new(),
+        }));
+
+        open_selected_with_command(&ui, &store, &state, true);
+
+        let status = ui.get_status().to_string();
+        assert!(
+            status.starts_with("Could not run nieuwser-missing-program-test:"),
+            "unexpected status: {status}"
+        );
+        assert!(!state.lock().unwrap().items[0].read);
+    }
+
     #[test]
     fn refresh_keeps_reader_position_and_read_items() {
         let _guard = init_headless();
@@ -4113,6 +4312,58 @@ mod sync_label_tests {
         // Year boundary.
         assert_eq!(absolute_date(1_735_689_599).as_deref(), Some("31 Dec 2024"));
         assert_eq!(absolute_date(1_735_689_600).as_deref(), Some("1 Jan 2025"));
+    }
+
+    #[test]
+    fn splits_the_open_with_command() {
+        let url = "https://example.com/a?b=c";
+        assert_eq!(
+            split_command("mpv --force-window=yes {}", url),
+            Some(vec!["mpv".into(), "--force-window=yes".into(), url.into()])
+        );
+        // No placeholder: the URL is appended.
+        assert_eq!(
+            split_command("mpv", url),
+            Some(vec!["mpv".into(), url.into()])
+        );
+        // Shell-style quoting is honoured, and nothing is executed.
+        assert_eq!(
+            split_command("player --title='a b' --flag=\"x y\" {}", url),
+            Some(vec![
+                "player".into(),
+                "--title=a b".into(),
+                "--flag=x y".into(),
+                url.into()
+            ])
+        );
+        // Every placeholder is replaced.
+        assert_eq!(
+            split_command("f {} {}", url),
+            Some(vec!["f".into(), url.into(), url.into()])
+        );
+        // Unusable templates.
+        assert_eq!(split_command("", url), None);
+        assert_eq!(split_command("   ", url), None);
+        assert_eq!(split_command("mpv 'unterminated", url), None);
+    }
+
+    #[test]
+    fn launch_command_reports_a_missing_program() {
+        // `spawn` only fails when the program itself is missing, which is the error we surface.
+        let error = launch_command(&["nieuwser-missing-program-test".into(), "x".into()])
+            .expect_err("the program does not exist");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(launch_command(&[]).is_err());
+    }
+
+    #[test]
+    fn names_the_open_with_program() {
+        assert_eq!(
+            command_program("mpv --force-window=yes {}").as_deref(),
+            Some("mpv")
+        );
+        assert_eq!(command_program("/usr/bin/mpv {}").as_deref(), Some("mpv"));
+        assert_eq!(command_program("  "), None);
     }
 
     #[test]

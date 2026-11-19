@@ -137,6 +137,14 @@ with that one value (body 1rem, secondary 0.733–0.867rem, headings 1.333–1.4
 deliberately excluded: `ReaderText` and the reader title/meta keep absolute `px` so article text
 doesn't change when only the interface is scaled.
 
+Links open with the system browser. A second, configurable command is available for everything
+else — `mpv` by default, for video/audio links that a browser would stream poorly. It is a
+template stored in `sync_state` (`open_with_command`), default `mpv --force-window=yes {}`:
+`shell-words` splits it into argv (no shell runs, so `|`, `&&`, and `$(…)` are literal), `{}` in
+any argument becomes the article URL, and without a placeholder the URL is appended. `Shift+O`
+and the article context menu ("Open with mpv") use it; an empty template hides both. Failures
+surface as `Could not run mpv: …`, and the read-on-open setting covers both openers.
+
 Keyboard-first: `j` next article, `k` previous, `↑`/`↓` scroll the reader, `r` toggle read,
 `f` toggle star, `o`/`Ctrl+O` open the selected article(s) in the browser, `Ctrl+A` select all
 articles in the current view, `Shift+↑`/`Shift+↓` extend the selected range in the list, `Esc`
@@ -376,6 +384,11 @@ Known issues:
 
 Recent changes (2026-11-11):
 
+- Added "open with" for a configurable external program (default `mpv --force-window=yes {}`),
+  reachable with `Shift+O` and from the article context menu, so video links can go to a player
+  instead of the browser. The template is parsed with `shell-words` into arguments without
+  running a shell; `{}` marks the URL. Settings gained the command field, and the read-on-open
+  setting is now labelled for both openers.
 - The reader's meta line now ends with the article's published date (`29 Feb 2024`, UTC), next to
   the feed and author; blank authors and unknown dates drop out instead of leaving separators.
   Both the reader and the adjacent-article preview share one `item_meta` helper.
