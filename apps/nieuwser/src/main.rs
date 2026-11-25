@@ -3644,6 +3644,20 @@ mod reader_layout_tests {
         assert_eq!(prev_calls.get(), previous);
         assert_eq!(next_calls.get(), upcoming);
 
+        // A diagonal up-flick still scrolls instead of being taken as a right swipe back to
+        // the list. Slint starts the vertical swipe at 2:1 dominance; the app must not classify
+        // the same gesture as horizontal just because dx is slightly larger than dy.
+        ui.invoke_scroll_reader(100_000.0);
+        let _ = ui.window().take_snapshot();
+        let lists = list_calls.get();
+        drag((250.0, 400.0), (370.0, 330.0));
+        assert!(
+            ui.get_reader_content_y() < 0.0,
+            "diagonal up-flick should scroll; content-y was {}",
+            ui.get_reader_content_y()
+        );
+        assert_eq!(list_calls.get(), lists);
+
         // A right swipe returns to the list from anywhere in the reader.
         let lists = list_calls.get();
         drag((100.0, 400.0), (320.0, 400.0));
@@ -3655,6 +3669,67 @@ mod reader_layout_tests {
         let confirm = ui.window().take_snapshot().unwrap();
         assert_ne!(before_confirm.as_bytes(), confirm.as_bytes());
         ui.invoke_close_mark_all_confirm();
+
+        // A fast touch flick delivered as a burst must scroll 1:1 instead of flinging to the
+        // end. winit gives touch events no sample time, so Slint's native Flickable derived a
+        // huge velocity from the near-zero spacing between queued moves.
+        ui.window().set_size(slint::PhysicalSize::new(1000, 800));
+        ui.set_compact_page("list".into());
+        ui.invoke_scroll_reader(100_000.0);
+        let _ = ui.window().take_snapshot();
+        use i_slint_core::input::TouchPhase;
+        let touch_at = |point: (f32, f32), phase, nanos: u64| {
+            slint::platform::WindowEvent::internal(slint::platform::InternalEvent::Touch {
+                id: 0,
+                position: i_slint_core::lengths::LogicalPoint::new(point.0, point.1),
+                phase,
+                event_time: Some(i_slint_core::animations::Instant::from_nanos(nanos)),
+                history: Default::default(),
+            })
+        };
+        ui.window()
+            .dispatch_event(touch_at((850.0, 600.0), TouchPhase::Started, 0));
+        for step in 1..=4u64 {
+            ui.window().dispatch_event(touch_at(
+                (850.0, 600.0 - 10.0 * step as f32),
+                TouchPhase::Moved,
+                step * 1_000_000,
+            ));
+            slint::platform::update_timers_and_animations();
+        }
+        ui.window()
+            .dispatch_event(touch_at((850.0, 560.0), TouchPhase::Ended, 5_000_000));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            slint::platform::update_timers_and_animations();
+            let _ = ui.window().take_snapshot();
+        }
+        assert!(
+            ui.get_reader_content_y() < -60.0,
+            "a touch flick should glide past the drag distance; content-y was {}",
+            ui.get_reader_content_y()
+        );
+        assert!(
+            ui.get_reader_content_y() > -600.0,
+            "a 40px touch flick should not fling to the end; content-y was {}",
+            ui.get_reader_content_y()
+        );
+
+        // Wheel scrolling still goes through the Flickable even though it no longer pans drags.
+        ui.invoke_scroll_reader(100_000.0);
+        let before = ui.get_reader_content_y();
+        ui.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(850.0, 400.0),
+                delta_x: 0.0,
+                delta_y: -100.0,
+            });
+        slint::platform::update_timers_and_animations();
+        assert!(
+            ui.get_reader_content_y() < before - 50.0,
+            "wheel scrolling should still move the reader; content-y was {}",
+            ui.get_reader_content_y()
+        );
     }
 
     fn test_item(

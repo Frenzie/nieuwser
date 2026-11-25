@@ -557,6 +557,12 @@ export component MainWindow inherits Window {
     private property <length> reader-swipe-x: 0px;
     private property <length> reader-swipe-y: 0px;
     private property <length> reader-gesture-last-dy: 0px;
+    // Recent per-event drag deltas in px, used to start a fling when the finger lifts.
+    private property <float> reader-drag-delta-1: 0.0;
+    private property <float> reader-drag-delta-2: 0.0;
+    // Fling state: px moved per 16ms tick, decaying by reader-fling-decay each tick.
+    private property <float> reader-fling-step: 0.0;
+    private property <float> reader-fling-decay: 0.95;
     private property <bool> reader-gesture-tracked: false;
     private property <bool> reader-gesture-horizontal: false;
     private property <bool> reader-gesture-vertical: false;
@@ -693,13 +699,33 @@ export component MainWindow inherits Window {
             root.reader-gesture-vertical = false;
         }
     }
-    changed article-index => { root.nav-presses = 0; }
-    changed compact-page => { root.nav-presses = 0; }
+    changed article-index => {
+        root.nav-presses = 0;
+        root.reader-fling-step = 0.0;
+    }
+    changed compact-page => {
+        root.nav-presses = 0;
+        root.reader-fling-step = 0.0;
+    }
 
     nav-timer := Timer {
         interval: 1s;
         running: root.nav-presses > 0;
         triggered => { root.nav-presses = 0; }
+    }
+
+    reader-fling-timer := Timer {
+        interval: 16ms;
+        running: root.reader-fling-step != 0.0;
+        triggered => {
+            let before = reader-scroll.content-y;
+            root.scroll-reader(root.reader-fling-step * 1px);
+            root.reader-fling-step = root.reader-fling-step * root.reader-fling-decay;
+            // Stop at the edges or when the glide is no longer visible.
+            if (abs(root.reader-fling-step) < 1.0 || reader-scroll.content-y == before) {
+                root.reader-fling-step = 0.0;
+            }
+        }
     }
 
     scroll-reader(delta) => {
@@ -709,6 +735,7 @@ export component MainWindow inherits Window {
     }
 
     public function scroll-reader-to-top() {
+        root.reader-fling-step = 0.0;
         reader-scroll.content-y = 0px;
     }
 
@@ -753,6 +780,7 @@ export component MainWindow inherits Window {
     }
 
     function nav-press(up: bool, delta: length) {
+        root.reader-fling-step = 0.0;
         let at-boundary = up ? root.reader-at-top : root.reader-at-bottom;
         if (!root.reader-active || !at-boundary) {
             root.nav-presses = 0;
@@ -867,9 +895,11 @@ export component MainWindow inherits Window {
                 root.nav-press(true, reader-scroll.height * 0.9);
                 accept
             } else if (event.text == Key.Home) {
+                root.reader-fling-step = 0.0;
                 reader-scroll.content-y = 0px;
                 accept
             } else if (event.text == Key.End) {
+                root.reader-fling-step = 0.0;
                 root.scroll-reader(0px - reader-scroll.content-height);
                 accept
             } else if (event.text == Key.DownArrow && event.modifiers.shift
@@ -1298,7 +1328,6 @@ export component MainWindow inherits Window {
 
                 // Wrap the content so drags that start on images still reach the gesture handler.
                 SwipeGestureHandler {
-                    enabled: root.compact;
                     x: 0px;
                     y: root.compact ? 66px : 0px;
                     width: parent.width;
@@ -1306,37 +1335,62 @@ export component MainWindow inherits Window {
                     handle-swipe-right: true;
                     handle-swipe-up: true;
                     handle-swipe-down: true;
+                    // A new touch stops any glide in progress.
+                    changed pressed-position => { root.reader-fling-step = 0.0; }
                     moved => {
+                        root.reader-fling-step = 0.0;
                         if (self.swiping) {
                             if (!root.reader-gesture-tracked) {
                                 root.reader-gesture-tracked = true;
                                 root.reader-gesture-last-dy = 0px;
                                 root.reader-gesture-at-top = root.reader-at-top;
                                 root.reader-gesture-at-bottom = root.reader-at-bottom;
+                                root.reader-drag-delta-1 = 0.0;
+                                root.reader-drag-delta-2 = 0.0;
                             }
                             let dx = self.current-position.x - self.pressed-position.x;
                             let dy = self.current-position.y - self.pressed-position.y;
                             let delta = dy - root.reader-gesture-last-dy;
                             root.reader-gesture-last-dy = dy;
-                            if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
-                                if (abs(dx) > abs(dy)) {
-                                    root.reader-gesture-horizontal = true;
-                                } else {
-                                    root.reader-gesture-vertical = true;
-                                }
-                            }
-                            if (root.reader-gesture-horizontal) {
-                                root.reader-swipe-x = Math.max(0px, Math.min(parent.width / 3, dx));
-                                root.reader-swipe-y = 0px;
-                            } else if ((root.reader-gesture-at-bottom && dy < 0px)
-                                || (root.reader-gesture-at-top && dy > 0px)) {
-                                root.reader-swipe-x = 0px;
-                                root.reader-swipe-y = Math.max(0px - parent.height / 3, Math.min(
-                                    parent.height / 3, dy));
-                            } else {
-                                root.reader-swipe-x = 0px;
-                                root.reader-swipe-y = 0px;
+                            if (!root.compact) {
+                                // The Flickable's native touch flick takes its velocity from event
+                                // timing, which winit doesn't provide for touch. Bursts of queued
+                                // moves then get near-zero deltas and a small flick flings to the
+                                // end, so drag the content ourselves in both layouts.
                                 root.scroll-reader(delta);
+                                root.reader-drag-delta-2 = root.reader-drag-delta-1;
+                                root.reader-drag-delta-1 = delta / 1px;
+                            } else {
+                                if (!root.reader-gesture-horizontal && !root.reader-gesture-vertical) {
+                                    // Slint recognizes a swipe once one axis is 2:1 dominant, so a
+                                    // diagonal flick can start a vertical swipe here. Only treat it
+                                    // as horizontal when the motion is clearly sideways, otherwise a
+                                    // small sideways drift would stop scrolling and go back to the list.
+                                    if (abs(dx) > abs(dy) * 2) {
+                                        root.reader-gesture-horizontal = true;
+                                    } else {
+                                        root.reader-gesture-vertical = true;
+                                    }
+                                }
+                                if (root.reader-gesture-horizontal) {
+                                    root.reader-drag-delta-1 = 0.0;
+                                    root.reader-drag-delta-2 = 0.0;
+                                    root.reader-swipe-x = Math.max(0px, Math.min(parent.width / 3, dx));
+                                    root.reader-swipe-y = 0px;
+                                } else if ((root.reader-gesture-at-bottom && dy < 0px)
+                                    || (root.reader-gesture-at-top && dy > 0px)) {
+                                    root.reader-drag-delta-1 = 0.0;
+                                    root.reader-drag-delta-2 = 0.0;
+                                    root.reader-swipe-x = 0px;
+                                    root.reader-swipe-y = Math.max(0px - parent.height / 3, Math.min(
+                                        parent.height / 3, dy));
+                                } else {
+                                    root.reader-swipe-x = 0px;
+                                    root.reader-swipe-y = 0px;
+                                    root.scroll-reader(delta);
+                                    root.reader-drag-delta-2 = root.reader-drag-delta-1;
+                                    root.reader-drag-delta-1 = delta / 1px;
+                                }
                             }
                         }
                     }
@@ -1345,14 +1399,31 @@ export component MainWindow inherits Window {
                         let dy = self.current-position.y - self.pressed-position.y;
                         root.reader-swipe-x = 0px;
                         root.reader-swipe-y = 0px;
-                        if (root.reader-gesture-horizontal) {
-                            if (dx > 80px) {
-                                root.return-to-list();
+                        if (root.compact) {
+                            if (root.reader-gesture-horizontal) {
+                                if (dx > 80px) {
+                                    root.return-to-list();
+                                }
+                            } else if (root.reader-gesture-at-bottom && dy < -80px) {
+                                root.next-article();
+                            } else if (root.reader-gesture-at-top && dy > 80px) {
+                                root.prev-article();
                             }
-                        } else if (root.reader-gesture-at-bottom && dy < -80px) {
-                            root.next-article();
-                        } else if (root.reader-gesture-at-top && dy > 80px) {
-                            root.prev-article();
+                        }
+                        // Only a vertical drag that actually scrolled leaves recent deltas.
+                        // Estimate the release speed from the pixel distance between touch
+                        // samples (about one per 10ms), then use the same Android fling
+                        // distance physics as the built-in Flickable. Capping the speed keeps
+                        // a queued burst of samples from shooting to the end of the article.
+                        let drag_delta = (root.reader-drag-delta-1 + root.reader-drag-delta-2) / 2;
+                        let velocity = Math.min(abs(drag_delta) * 100, 6000);
+                        if (velocity < 100) {
+                            root.reader-fling-step = 0.0;
+                        } else {
+                            let distance = 778.4 * Math.pow(0.35 * velocity / 778.4, 1.736);
+                            let step = velocity * 0.016;
+                            root.reader-fling-decay = Math.max(0.5, Math.min(0.995, 1 - step / distance));
+                            root.reader-fling-step = drag_delta > 0 ? step : 0 - step;
                         }
                         root.reader-gesture-tracked = false;
                         root.reader-gesture-horizontal = false;
@@ -1362,6 +1433,7 @@ export component MainWindow inherits Window {
                     cancelled => {
                         root.reader-swipe-x = 0px;
                         root.reader-swipe-y = 0px;
+                        root.reader-fling-step = 0.0;
                         root.reader-gesture-tracked = false;
                         root.reader-gesture-horizontal = false;
                         root.reader-gesture-vertical = false;
@@ -1426,7 +1498,10 @@ export component MainWindow inherits Window {
                         accessible-label: root.reader-title;
 
                         reader-scroll := Flickable {
-                            interactive: !root.compact;
+                            // Drag panning goes through the SwipeGestureHandler so touch
+                            // bursts can't fling the reader to the end; wheel scrolling still
+                            // works here regardless of `interactive`.
+                            interactive: false;
                             content-y <=> root.reader-content-y;
                             content-height: reader-content.preferred-height;
                             content-width: self.width;
@@ -1609,6 +1684,7 @@ export component MainWindow inherits Window {
                             if (event.button == PointerEventButton.left) {
                                 if (event.kind == PointerEventKind.down) {
                                     root.dismiss-search();
+                                    root.reader-fling-step = 0.0;
                                     root.reader-scrollbar-dragging = true;
                                     root.reader-scrollbar-drag-start-y = self.mouse-y;
                                     root.reader-scrollbar-drag-start-content-y = reader-scroll.content-y;
